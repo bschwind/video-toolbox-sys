@@ -78,6 +78,12 @@ fn build(sdk_path: Option<&str>, target: &str) {
     builder = builder.whitelist_type("CFDictionary.*");
     builder = builder.whitelist_function("CFDictionary.*");
 
+    builder = builder.whitelist_type("CMSampleBuffer.*");
+    builder = builder.whitelist_function("CMSampleBuffer.*");
+
+    builder = builder.whitelist_type("CMBlockBuffer.*");
+    builder = builder.whitelist_function("CMBlockBuffer.*");
+
     builder = builder.whitelist_type("kVTVideoEncoderSpecification.*");
     builder = builder.whitelist_function("kVTVideoEncoderSpecification.*");
 
