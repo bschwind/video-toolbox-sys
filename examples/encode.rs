@@ -5,10 +5,11 @@ use std::{
 };
 use video_toolbox_sys::{
     kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, kCMVideoCodecType_HEVC,
-    CFDictionaryCreate, CMBlockBufferCopyDataBytes, CMSampleBufferGetDataBuffer,
+    CFDictionaryCreate, CMBlockBufferCopyDataBytes, CMBlockBufferGetDataPointer,
+    CMFormatDescriptionRef, CMSampleBufferGetDataBuffer, CMSampleBufferGetFormatDescription,
     CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid, CMSampleBufferRef, CMTime,
-    CVPixelBufferCreateWithBytes, CVPixelBufferRef, FourCharCode, VTCompressionSessionEncodeFrame,
-    VTEncodeInfoFlags,
+    CMVideoFormatDescriptionGetHEVCParameterSetAtIndex, CVPixelBufferCreateWithBytes,
+    CVPixelBufferRef, FourCharCode, VTCompressionSessionEncodeFrame, VTEncodeInfoFlags,
 };
 // use core_foundation::dictionary::CFDictionaryCreate;
 use core_foundation::{
@@ -33,60 +34,162 @@ extern "C" {}
 extern "C" {}
 
 unsafe extern "C" fn encode_callback(
-    outputCallbackRefCon: *mut ::std::os::raw::c_void,
-    sourceFrameRefCon: *mut ::std::os::raw::c_void,
+    outputCallbackRefCon: *mut std::os::raw::c_void,
+    sourceFrameRefCon: *mut std::os::raw::c_void,
     status: OSStatus,
     infoFlags: VTEncodeInfoFlags,
     sampleBuffer: CMSampleBufferRef,
 ) {
     println!("encode_callback");
 
-    // Returns the total size in bytes of sample data in a CMSampleBuffer.
+    println!("Status: {}", status);
+
     println!("Valid buffer: {}", CMSampleBufferIsValid(sampleBuffer));
+    // Returns the total size in bytes of sample data in a CMSampleBuffer.
     let data_length = CMSampleBufferGetTotalSampleSize(sampleBuffer);
     println!("Total sample size: {}", data_length);
 
     let data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
     println!("Data buffer: {:?}", data_buffer);
 
-    let mut dest = vec![0u8; data_length];
-    let offset = 0;
-    let _ =
-        CMBlockBufferCopyDataBytes(data_buffer, offset, data_length, dest.as_mut_ptr() as *mut _);
+    let format = CMSampleBufferGetFormatDescription(sampleBuffer);
 
-    dbg!(dest.len());
+    let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
+    let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
+    let pps = get_hevc_param(format, HevcParam::Pps).unwrap();
+
+    let mut hevc_data = vec![0u8; data_length];
+
+    let offset = 0;
+    let _ = CMBlockBufferCopyDataBytes(
+        data_buffer,
+        offset,
+        data_length,
+        hevc_data.as_mut_ptr() as *mut _,
+    );
+
+    const HEADER: &[u8; 4] = &[0, 0, 0, 1];
+
+    let mut output = vec![];
+    output.extend_from_slice(HEADER);
+    output.extend_from_slice(&vps);
+
+    output.extend_from_slice(HEADER);
+    output.extend_from_slice(&sps);
+
+    output.extend_from_slice(HEADER);
+    output.extend_from_slice(&pps);
+
+    let mut buffer_offset = 0;
+
+    while buffer_offset < (hevc_data.len() - HEADER.len()) {
+        let mut nal_len = u32::from_ne_bytes([
+            hevc_data[buffer_offset],
+            hevc_data[(buffer_offset + 1)],
+            hevc_data[(buffer_offset + 2)],
+            hevc_data[(buffer_offset + 3)],
+        ]);
+        nal_len = u32::from_be(nal_len);
+        dbg!(nal_len);
+
+        output.extend_from_slice(HEADER);
+        let hevc_offset = buffer_offset + HEADER.len();
+        output.extend_from_slice(&hevc_data[hevc_offset..(hevc_offset + nal_len as usize)]);
+
+        buffer_offset += HEADER.len();
+        buffer_offset += nal_len as usize;
+    }
+
+    std::mem::forget(vps);
+    std::mem::forget(sps);
+    std::mem::forget(pps);
+
+    std::fs::write("out.hevc", &output).unwrap();
+
+    dbg!(hevc_data.len());
+}
+
+#[derive(Debug)]
+enum HevcParam {
+    Vps,
+    Sps,
+    Pps,
+}
+
+impl HevcParam {
+    fn index(&self) -> usize {
+        match self {
+            HevcParam::Vps => 0,
+            HevcParam::Sps => 1,
+            HevcParam::Pps => 2,
+        }
+    }
+}
+
+fn get_hevc_param(format: CMFormatDescriptionRef, param: HevcParam) -> Option<Vec<u8>> {
+    let mut param_set_ptr: *const u8 = std::ptr::null_mut();
+    let mut param_set_size: usize = 0;
+    let mut param_set_count: usize = 0;
+    let mut nal_unit_header_length: std::os::raw::c_int = 0;
+
+    let status = unsafe {
+        CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+            format,
+            param.index(),
+            &mut param_set_ptr,
+            &mut param_set_size,
+            &mut param_set_count,
+            &mut nal_unit_header_length,
+        )
+    };
+
+    println!(
+        "{:?} - size: {}, count: {}, NAL header len: {:?}",
+        param, param_set_size, param_set_count, nal_unit_header_length
+    );
+
+    if status == 0 {
+        unsafe {
+            let vec = Vec::from_raw_parts(param_set_ptr as *mut _, param_set_size, param_set_size);
+            println!("{:?}", vec);
+            Some(vec)
+        }
+    } else {
+        None
+    }
 }
 
 fn main() {
     let frame_width = 1280usize;
     let frame_height = 720usize;
 
-    // let mut compression_ref = OpaqueVTCompressionSession { _unused: [0; 0] };
     let mut compression_ref = std::mem::MaybeUninit::<VTCompressionSessionRef>::uninit();
 
-    // let keys: Vec<CFStringRef> = unsafe { vec![kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] };
-    // let values: Vec<CFBoolean> = vec![CFBoolean::true_value()];
+    let keys: Vec<CFStringRef> =
+        unsafe { vec![kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] };
+    let values: Vec<CFBoolean> = vec![CFBoolean::true_value()];
 
-    // let encoder_specification = unsafe { CFDictionaryCreate(
-    //     std::ptr::null(),
-    //     std::mem::transmute(keys.as_ptr()),
-    //     std::mem::transmute(values.as_ptr()),
-    //     keys.len().to_CFIndex().try_into().unwrap(),
-    //     &kCFTypeDictionaryKeyCallBacks,
-    //     &kCFTypeDictionaryValueCallBacks,
-    // ) };
+    let encoder_specification = unsafe {
+        CFDictionaryCreate(
+            std::ptr::null(),
+            std::mem::transmute(keys.as_ptr()),
+            std::mem::transmute(values.as_ptr()),
+            keys.len().to_CFIndex().try_into().unwrap(),
+            &kCFTypeDictionaryKeyCallBacks,
+            &kCFTypeDictionaryValueCallBacks,
+        )
+    };
 
     // Create the encoder
     let create_status = unsafe {
         VTCompressionSessionCreate(
-            std::ptr::null(),    // Allocator
-            frame_width as i32,  // Width
-            frame_height as i32, // Height
-            kCMVideoCodecType_HEVC,
-            // encoder_specification, // Encoder Specification
-            std::ptr::null(),
-            std::ptr::null(),      // Src pixel buffer attributes
-            std::ptr::null(),      // Compressed data allocator
+            std::ptr::null(),       // Allocator
+            frame_width as i32,     // Width
+            frame_height as i32,    // Height
+            kCMVideoCodecType_HEVC, // Codec type
+            encoder_specification,  // Encoder specification,
+            std::ptr::null(),       // Src pixel buffer attributes
+            std::ptr::null(),       // Compressed data allocator
             Some(encode_callback), // Output callback, pass NULL if you're using VTCompressionSessionEncodeFrameWithOutputHandler
             std::ptr::null_mut(),  // Client-defined reference value for the output callback
             compression_ref.as_mut_ptr() as *mut VTCompressionSessionRef,
@@ -162,10 +265,10 @@ fn make_image_frame(width: usize, height: usize) -> Vec<u8> {
             let width_factor = x as f32 / width as f32;
             let height_factor = y as f32 / height as f32;
 
-            frame[pixel_offset] = (width_factor * 255.0) as u8; // Red
-            frame[pixel_offset + 1] = 255; // Green
-            frame[pixel_offset + 2] = (height_factor * 255.0) as u8; // Blue
-            frame[pixel_offset + 3] = 255; // Alpha
+            frame[pixel_offset] = 255; // Alpha
+            frame[pixel_offset + 1] = (width_factor * 255.0) as u8; // Red
+            frame[pixel_offset + 2] = 255; // Green
+            frame[pixel_offset + 3] = (height_factor * 255.0) as u8; // Blue
         }
     }
 

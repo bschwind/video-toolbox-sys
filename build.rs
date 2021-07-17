@@ -81,6 +81,9 @@ fn build(sdk_path: Option<&str>, target: &str) {
     builder = builder.whitelist_type("CMSampleBuffer.*");
     builder = builder.whitelist_function("CMSampleBuffer.*");
 
+    builder = builder.whitelist_type("CMVideoFormat.*");
+    builder = builder.whitelist_function("CMVideoFormat.*");
+
     builder = builder.whitelist_type("CMBlockBuffer.*");
     builder = builder.whitelist_function("CMBlockBuffer.*");
 
