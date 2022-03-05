@@ -1,26 +1,21 @@
 use core_foundation::base::{CFIndexConvertible, OSStatus};
-use std::{
-    convert::TryInto,
-    os::raw::{c_int, c_void},
-};
+use std::{convert::TryInto, os::raw::c_void};
 use video_toolbox_sys::{
     kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, kCMVideoCodecType_HEVC,
-    CFDictionaryCreate, CMBlockBufferCopyDataBytes, CMBlockBufferGetDataPointer,
-    CMFormatDescriptionRef, CMSampleBufferGetDataBuffer, CMSampleBufferGetFormatDescription,
+    CFDictionaryCreate, CMBlockBufferCopyDataBytes, CMFormatDescriptionRef,
+    CMSampleBufferGetDataBuffer, CMSampleBufferGetFormatDescription,
     CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid, CMSampleBufferRef, CMTime,
     CMVideoFormatDescriptionGetHEVCParameterSetAtIndex, CVPixelBufferCreateWithBytes,
-    CVPixelBufferRef, FourCharCode, VTCompressionSessionEncodeFrame, VTEncodeInfoFlags,
+    CVPixelBufferRef, VTCompressionSessionCompleteFrames, VTCompressionSessionEncodeFrame,
+    VTEncodeInfoFlags,
 };
 // use core_foundation::dictionary::CFDictionaryCreate;
-use core_foundation::{
-    boolean::CFBoolean,
-    string::{CFString, CFStringRef},
-};
+use core_foundation::{boolean::CFBoolean, string::CFStringRef};
 use video_toolbox_sys::{VTCompressionSessionCreate, VTCompressionSessionRef};
 
-const fn fourcc(a: u8, b: u8, c: u8, d: u8) -> u32 {
-    ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | d as u32
-}
+// const fn fourcc(a: u8, b: u8, c: u8, d: u8) -> u32 {
+//     ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | d as u32
+// }
 
 #[link(name = "VideoToolbox", kind = "framework")]
 extern "C" {
@@ -34,25 +29,25 @@ extern "C" {}
 extern "C" {}
 
 unsafe extern "C" fn encode_callback(
-    outputCallbackRefCon: *mut std::os::raw::c_void,
-    sourceFrameRefCon: *mut std::os::raw::c_void,
+    _output_callback_ref_con: *mut std::os::raw::c_void,
+    source_frame_ref_con: *mut std::os::raw::c_void,
     status: OSStatus,
-    infoFlags: VTEncodeInfoFlags,
-    sampleBuffer: CMSampleBufferRef,
+    _info_flags: VTEncodeInfoFlags,
+    sample_buffer: CMSampleBufferRef,
 ) {
     println!("encode_callback");
 
     println!("Status: {}", status);
 
-    println!("Valid buffer: {}", CMSampleBufferIsValid(sampleBuffer));
+    println!("Valid buffer: {}", CMSampleBufferIsValid(sample_buffer));
     // Returns the total size in bytes of sample data in a CMSampleBuffer.
-    let data_length = CMSampleBufferGetTotalSampleSize(sampleBuffer);
+    let data_length = CMSampleBufferGetTotalSampleSize(sample_buffer);
     println!("Total sample size: {}", data_length);
 
-    let data_buffer = CMSampleBufferGetDataBuffer(sampleBuffer);
+    let data_buffer = CMSampleBufferGetDataBuffer(sample_buffer);
     println!("Data buffer: {:?}", data_buffer);
 
-    let format = CMSampleBufferGetFormatDescription(sampleBuffer);
+    let format = CMSampleBufferGetFormatDescription(sample_buffer);
 
     let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
     let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
@@ -105,6 +100,10 @@ unsafe extern "C" fn encode_callback(
     std::mem::forget(pps);
 
     std::fs::write("out.hevc", &output).unwrap();
+
+    if let Some(custom_val) = (source_frame_ref_con as *mut u32).as_mut() {
+        *custom_val = 37;
+    }
 
     dbg!(hevc_data.len());
 }
@@ -210,13 +209,13 @@ fn main() {
     println!("Uncompressed size: {}", frame_data.len());
 
     let mut pixel_buffer_ref = std::mem::MaybeUninit::<CVPixelBufferRef>::uninit();
-    let kCVPixelFormatType_32ARGB = 0x00000020; // TODO(bschwind) - get this from CoreVideo
+    let k_cvpixel_format_type_32_argb = 0x00000020; // TODO(bschwind) - get this from CoreVideo
     let pixel_buffer_create_status = unsafe {
         CVPixelBufferCreateWithBytes(
             std::ptr::null(),
             frame_width as usize,
             frame_height as usize,
-            kCVPixelFormatType_32ARGB,
+            k_cvpixel_format_type_32_argb,
             frame_data.as_ptr() as *mut c_void,
             (4 * frame_width) as usize, // bytes per row
             None,
@@ -239,20 +238,31 @@ fn main() {
 
     let invalid_duration = CMTime { value: 0i64, timescale: 0i32, flags: 0u32, epoch: 0i64 };
 
+    let mut custom_val = 0u32;
+
+    let encode_start = std::time::Instant::now();
     // Encode the frame
     let encode_status = unsafe {
         VTCompressionSessionEncodeFrame(
             compression_session,
             pixel_buffer,
-            frame_time,           // Presentation timestamp
-            invalid_duration,     // Frame duration
-            std::ptr::null(),     // Frame Properties
-            std::ptr::null_mut(), // Source frame ref con
-            std::ptr::null_mut(), // Info flags out
+            frame_time,                                 // Presentation timestamp
+            invalid_duration,                           // Frame duration
+            std::ptr::null(),                           // Frame Properties
+            &mut custom_val as *mut u32 as *mut c_void, // Source frame ref con
+            std::ptr::null_mut(),                       // Info flags out
         );
     };
 
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    println!("Encode status: {:?}", encode_status);
+
+    // Wait for the encode to finish.
+    let _ = unsafe {
+        VTCompressionSessionCompleteFrames(compression_session, invalid_duration);
+    };
+
+    println!("Took: {:?}", encode_start.elapsed());
+    println!("Our custom value is {}", custom_val);
 }
 
 fn make_image_frame(width: usize, height: usize) -> Vec<u8> {
