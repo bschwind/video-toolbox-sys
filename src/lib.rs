@@ -4,9 +4,8 @@
 #![allow(non_upper_case_globals)]
 
 use core_foundation::{
-    base::{Boolean, OSStatus},
+    base::{Boolean, CFAllocatorRef, OSStatus},
     dictionary::CFDictionaryRef,
-    mach_port::CFAllocatorRef,
     string::CFStringRef,
 };
 use std::os::raw::{c_int, c_void};
