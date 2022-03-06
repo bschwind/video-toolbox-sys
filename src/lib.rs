@@ -121,7 +121,7 @@ extern "C" {
 }
 
 // CoreMedia
-#[link(name = "VideoToolbox", kind = "framework")]
+#[link(name = "CoreMedia", kind = "framework")]
 extern "C" {
     pub fn CMSampleBufferIsValid(sample_buffer: CMSampleBufferRef) -> Boolean;
     pub fn CMSampleBufferGetTotalSampleSize(sample_buffer: CMSampleBufferRef) -> usize;
