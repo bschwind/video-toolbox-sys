@@ -1,32 +1,21 @@
-use core_foundation::base::{CFIndexConvertible, OSStatus};
+use core_foundation::{
+    base::{CFIndexConvertible, OSStatus},
+    boolean::CFBoolean,
+    dictionary::{
+        kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
+    },
+    string::CFStringRef,
+};
 use std::{convert::TryInto, os::raw::c_void};
 use video_toolbox_sys::{
-    kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, kCMVideoCodecType_HEVC,
-    CFDictionaryCreate, CMBlockBufferCopyDataBytes, CMFormatDescriptionRef,
-    CMSampleBufferGetDataBuffer, CMSampleBufferGetFormatDescription,
-    CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid, CMSampleBufferRef, CMTime,
-    CMVideoFormatDescriptionGetHEVCParameterSetAtIndex, CVPixelBufferCreateWithBytes,
-    CVPixelBufferRef, VTCompressionSessionCompleteFrames, VTCompressionSessionEncodeFrame,
+    kCMVideoCodecType_HEVC, kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+    CMBlockBufferCopyDataBytes, CMFormatDescriptionRef, CMSampleBufferGetDataBuffer,
+    CMSampleBufferGetFormatDescription, CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid,
+    CMSampleBufferRef, CMTime, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex,
+    CVPixelBufferCreateWithBytes, CVPixelBufferRef, VTCompressionSessionCompleteFrames,
+    VTCompressionSessionCreate, VTCompressionSessionEncodeFrame, VTCompressionSessionRef,
     VTEncodeInfoFlags,
 };
-// use core_foundation::dictionary::CFDictionaryCreate;
-use core_foundation::{boolean::CFBoolean, string::CFStringRef};
-use video_toolbox_sys::{VTCompressionSessionCreate, VTCompressionSessionRef};
-
-// const fn fourcc(a: u8, b: u8, c: u8, d: u8) -> u32 {
-//     ((a as u32) << 24) | ((b as u32) << 16) | ((c as u32) << 8) | d as u32
-// }
-
-#[link(name = "VideoToolbox", kind = "framework")]
-extern "C" {
-    pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
-}
-
-#[link(name = "CoreVideo", kind = "framework")]
-extern "C" {}
-
-#[link(name = "CoreMedia", kind = "framework")]
-extern "C" {}
 
 unsafe extern "C" fn encode_callback(
     _output_callback_ref_con: *mut std::os::raw::c_void,
@@ -191,7 +180,7 @@ fn main() {
             std::ptr::null(),       // Compressed data allocator
             Some(encode_callback), // Output callback, pass NULL if you're using VTCompressionSessionEncodeFrameWithOutputHandler
             std::ptr::null_mut(),  // Client-defined reference value for the output callback
-            compression_ref.as_mut_ptr() as *mut VTCompressionSessionRef,
+            compression_ref.as_mut_ptr() as VTCompressionSessionRef,
         )
     };
 

@@ -9,6 +9,3 @@ repository = "https://github.com/bschwind/video-toolbox-sys"
 
 [dependencies]
 core-foundation = "0.9"
-
-[build-dependencies]
-bindgen = { version = "0.56", default-features = false, features = ["runtime"] }
