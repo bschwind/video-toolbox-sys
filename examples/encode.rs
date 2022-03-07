@@ -17,7 +17,7 @@ use video_toolbox_sys::{
     VTEncodeInfoFlags,
 };
 
-unsafe extern "C" fn encode_callback(
+extern "C" fn encode_callback(
     _output_callback_ref_con: *mut std::os::raw::c_void,
     source_frame_ref_con: *mut std::os::raw::c_void,
     status: OSStatus,
@@ -28,15 +28,15 @@ unsafe extern "C" fn encode_callback(
 
     println!("Status: {}", status);
 
-    println!("Valid buffer: {}", CMSampleBufferIsValid(sample_buffer));
+    println!("Valid buffer: {}", unsafe { CMSampleBufferIsValid(sample_buffer) });
     // Returns the total size in bytes of sample data in a CMSampleBuffer.
-    let data_length = CMSampleBufferGetTotalSampleSize(sample_buffer);
+    let data_length = unsafe { CMSampleBufferGetTotalSampleSize(sample_buffer) };
     println!("Total sample size: {}", data_length);
 
-    let data_buffer = CMSampleBufferGetDataBuffer(sample_buffer);
+    let data_buffer = unsafe { CMSampleBufferGetDataBuffer(sample_buffer) };
     println!("Data buffer: {:?}", data_buffer);
 
-    let format = CMSampleBufferGetFormatDescription(sample_buffer);
+    let format = unsafe { CMSampleBufferGetFormatDescription(sample_buffer) };
 
     let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
     let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
@@ -45,12 +45,14 @@ unsafe extern "C" fn encode_callback(
     let mut hevc_data = vec![0u8; data_length];
 
     let offset = 0;
-    let _ = CMBlockBufferCopyDataBytes(
-        data_buffer,
-        offset,
-        data_length,
-        hevc_data.as_mut_ptr() as *mut _,
-    );
+    let _ = unsafe {
+        CMBlockBufferCopyDataBytes(
+            data_buffer,
+            offset,
+            data_length,
+            hevc_data.as_mut_ptr() as *mut _,
+        )
+    };
 
     const HEADER: &[u8; 4] = &[0, 0, 0, 1];
 
@@ -90,8 +92,10 @@ unsafe extern "C" fn encode_callback(
 
     std::fs::write("out.hevc", &output).unwrap();
 
-    if let Some(custom_val) = (source_frame_ref_con as *mut u32).as_mut() {
-        *custom_val = 37;
+    unsafe {
+        if let Some(custom_val) = (source_frame_ref_con as *mut u32).as_mut() {
+            *custom_val = 37;
+        }
     }
 
     dbg!(hevc_data.len());

@@ -77,7 +77,7 @@ pub type CVPixelBufferReleaseBytesCallback =
     extern "C" fn(release_ref_con: *mut c_void, base_address: *const c_void);
 
 // Callback Types
-pub type VTCompressionOutputCallback = unsafe extern "C" fn(
+pub type VTCompressionOutputCallback = extern "C" fn(
     output_callback_ref_con: *mut c_void,
     source_frame_ref_con: *mut c_void,
     status: OSStatus,
