@@ -15,8 +15,15 @@ pub struct OpaqueVTCompressionSession {
     _data: [u8; 0],
 }
 
+#[repr(C)]
+pub struct OpaqueVTDecompressionSession {
+    _data: [u8; 0],
+}
+
 pub type VTCompressionSessionRef = *mut OpaqueVTCompressionSession;
+pub type VTDecompressionSessionRef = *mut OpaqueVTDecompressionSession;
 pub type VTEncodeInfoFlags = u32;
+pub type VTDecodeInfoFlags = u32;
 
 // CoreMedia Types
 pub type FourCharCode = u32;
@@ -43,6 +50,7 @@ pub struct CMFormatDescription {
 }
 
 pub type CMFormatDescriptionRef = *mut CMFormatDescription;
+pub type CMVideoFormatDescriptionRef = CMFormatDescriptionRef;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -85,9 +93,20 @@ pub type VTCompressionOutputCallback = extern "C" fn(
     sample_buffer: CMSampleBufferRef,
 );
 
+pub type VTDecompressionOutputCallback = extern "C" fn(
+    output_callback_ref_con: *mut c_void,
+    source_frame_ref_con: *mut c_void,
+    status: OSStatus,
+    info_flags: VTDecodeInfoFlags,
+    image_buffer: CVImageBufferRef,
+    presentation_timestamp: CMTime,
+    presentation_duration: CMTime,
+);
+
 // Encoding
 #[link(name = "VideoToolbox", kind = "framework")]
 extern "C" {
+    // Encoding
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
 
     pub fn VTCompressionSessionCreate(
@@ -117,6 +136,18 @@ extern "C" {
         session: VTCompressionSessionRef,
         complete_until_presentation_timestamp: CMTime,
     ) -> OSStatus;
+
+    // Decoding
+    pub static kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: CFStringRef;
+
+    pub fn VTDecompressionSessionCreate(
+        allocator: CFAllocatorRef,
+        video_format_description: CMVideoFormatDescriptionRef,
+        video_decoder_specification: CFDictionaryRef,
+        destination_image_buffer_attributes: CFDictionaryRef,
+        output_callback: Option<VTDecompressionOutputCallback>,
+        decompression_session_out: VTDecompressionSessionRef,
+    ) -> OSStatus;
 }
 
 // CoreMedia
@@ -141,6 +172,14 @@ extern "C" {
         offset_to_data: usize,
         data_length: usize,
         destination: *mut c_void,
+    ) -> OSStatus;
+    pub fn CMVideoFormatDescriptionCreate(
+        allocator: CFAllocatorRef,
+        codec_type: CMVideoCodecType,
+        width: i32,
+        height: i32,
+        extensions: CFDictionaryRef,
+        format_description_out: CMVideoFormatDescriptionRef,
     ) -> OSStatus;
 }
 
