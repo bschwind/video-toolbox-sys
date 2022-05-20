@@ -9,9 +9,10 @@ use core_foundation::{
 };
 use std::convert::TryInto;
 use video_toolbox_sys::{
-    kCMVideoCodecType_HEVC, kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
-    CMTime, CMVideoFormatDescriptionCreate, CMVideoFormatDescriptionRef, CVImageBufferRef,
-    VTDecodeInfoFlags, VTDecompressionSessionCreate, VTDecompressionSessionRef,
+    kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
+    CMTime, CMVideoFormatDescriptionCreateFromHEVCParameterSets,
+    CMVideoFormatDescriptionRef, CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate,
+    VTDecompressionSessionRef,
 };
 
 extern "C" fn decode_callback(
@@ -101,8 +102,8 @@ extern "C" fn decode_callback(
 }
 
 fn main() {
-    let frame_width = 1280usize;
-    let frame_height = 720usize;
+    let _frame_width = 1280usize;
+    let _frame_height = 720usize;
 
     let keys: Vec<CFStringRef> =
         unsafe { vec![kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder] };
@@ -121,12 +122,35 @@ fn main() {
 
     let format_description = unsafe {
         let mut format_ref = std::mem::MaybeUninit::<CMVideoFormatDescriptionRef>::uninit();
-        CMVideoFormatDescriptionCreate(
-            std::ptr::null(),       // Allocator
-            kCMVideoCodecType_HEVC, // codec type
-            frame_width as i32,     // width
-            frame_height as i32,    // height
-            std::ptr::null(),       // extensions
+        // CMVideoFormatDescriptionCreate(
+        //     std::ptr::null(),       // Allocator
+        //     kCMVideoCodecType_HEVC, // codec type
+        //     frame_width as i32,     // width
+        //     frame_height as i32,    // height
+        //     std::ptr::null(),       // extensions
+        //     format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef,
+        // );
+
+        // TODO(bschwind) - Hardcoded for now, but extract from the HEVC stream later
+        let vps: Vec<u8> = vec![
+            64, 1, 12, 1, 255, 255, 1, 96, 0, 0, 3, 0, 176, 0, 0, 3, 0, 0, 3, 0, 150, 21, 192, 144,
+        ];
+        let sps: Vec<u8> = vec![
+            66, 1, 1, 1, 96, 0, 0, 3, 0, 176, 0, 0, 3, 0, 0, 3, 0, 150, 160, 2, 128, 128, 45, 22,
+            32, 87, 185, 22, 85, 53, 2, 2, 2, 164, 2,
+        ];
+        let pps: Vec<u8> = vec![68, 1, 192, 44, 188, 20, 201];
+
+        let parameter_set_sizes = vec![vps.len(), sps.len(), pps.len()];
+        let parameter_sets = vec![vps.as_ptr(), sps.as_ptr(), pps.as_ptr()];
+
+        CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+            std::ptr::null(),     // Allocator
+            parameter_sets.len(), // parameter set count
+            parameter_sets.as_ptr(),
+            parameter_set_sizes.as_ptr(),
+            4,                // NAL unit header length
+            std::ptr::null(), // extensions
             format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef,
         );
 

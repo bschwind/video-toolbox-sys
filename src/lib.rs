@@ -181,6 +181,15 @@ extern "C" {
         extensions: CFDictionaryRef,
         format_description_out: CMVideoFormatDescriptionRef,
     ) -> OSStatus;
+    pub fn CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+        allocator: CFAllocatorRef,
+        parameter_set_count: usize,
+        parameter_set_pointers: *const *const u8,
+        parameter_set_sizes: *const usize,
+        nal_unit_header_length: i32,
+        extensions: CFDictionaryRef,
+        format_description_out: CMVideoFormatDescriptionRef,
+    ) -> OSStatus;
 }
 
 // CoreVideo
