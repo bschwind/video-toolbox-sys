@@ -135,6 +135,9 @@ fn main() {
         format
     };
 
+    // https://github.com/peter-iakovlev/TelegramUI/blob/e8b193443d1b84f00390138a82c44ebfcceb496a/TelegramUI/FFMpegMediaFrameSourceContextHelpers.swift#L67-L92
+    // https://stackoverflow.com/questions/29525000/how-to-use-videotoolbox-to-decompress-h-264-video-stream/29525001#29525001
+
     // Create the decoder
     let mut decompression_ref = std::mem::MaybeUninit::<VTDecompressionSessionRef>::uninit();
 
