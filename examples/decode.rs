@@ -9,10 +9,9 @@ use core_foundation::{
 };
 use std::convert::TryInto;
 use video_toolbox_sys::{
-    kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
-    CMTime, CMVideoFormatDescriptionCreateFromHEVCParameterSets,
-    CMVideoFormatDescriptionRef, CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate,
-    VTDecompressionSessionRef,
+    kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, CMTime,
+    CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
+    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate, VTDecompressionSessionRef,
 };
 
 extern "C" fn decode_callback(
