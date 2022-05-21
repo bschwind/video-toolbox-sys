@@ -17,90 +17,131 @@ use video_toolbox_sys::{
 extern "C" fn decode_callback(
     _output_callback_ref_con: *mut c_void,
     _source_frame_ref_con: *mut c_void,
-    _status: OSStatus,
+    status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
     _image_buffer: CVImageBufferRef,
     _presentation_timestamp: CMTime,
     _presentation_duration: CMTime,
 ) {
-    // println!("decode_callback");
+    println!("decode_callback");
+    println!("Status: {}", status);
+}
 
-    // println!("Status: {}", status);
+struct NalIterator<'a> {
+    hevc_bytes: &'a [u8],
+}
 
-    // println!("Valid buffer: {}", unsafe { CMSampleBufferIsValid(sample_buffer) });
-    // // Returns the total size in bytes of sample data in a CMSampleBuffer.
-    // let data_length = unsafe { CMSampleBufferGetTotalSampleSize(sample_buffer) };
-    // println!("Total sample size: {}", data_length);
+impl<'a> NalIterator<'a> {
+    fn new(hevc_bytes: &'a [u8]) -> Self {
+        Self { hevc_bytes }
+    }
+}
 
-    // let data_buffer = unsafe { CMSampleBufferGetDataBuffer(sample_buffer) };
-    // println!("Data buffer: {:?}", data_buffer);
+impl<'a> Iterator for NalIterator<'a> {
+    type Item = Nal<'a>;
 
-    // let format = unsafe { CMSampleBufferGetFormatDescription(sample_buffer) };
+    fn next(&mut self) -> Option<<Self as Iterator>::Item> {
+        if self.hevc_bytes.is_empty() {
+            return None;
+        }
 
-    // let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
-    // let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
-    // let pps = get_hevc_param(format, HevcParam::Pps).unwrap();
+        let mut cursor = 0;
 
-    // let mut hevc_data = vec![0u8; data_length];
+        while cursor < self.hevc_bytes.len() && self.hevc_bytes[cursor] != 1 {
+            cursor += 1;
+        }
 
-    // let offset = 0;
-    // let _ = unsafe {
-    //     CMBlockBufferCopyDataBytes(
-    //         data_buffer,
-    //         offset,
-    //         data_length,
-    //         hevc_data.as_mut_ptr() as *mut _,
-    //     )
-    // };
+        if cursor + 1 >= self.hevc_bytes.len() {
+            return None;
+        }
 
-    // const HEADER: &[u8; 4] = &[0, 0, 0, 1];
+        cursor += 1;
 
-    // let mut output = vec![];
-    // output.extend_from_slice(HEADER);
-    // output.extend_from_slice(&vps);
+        let nal_start = cursor;
+        let nal_type = (self.hevc_bytes[cursor] >> 1) & 0b0011_1111;
 
-    // output.extend_from_slice(HEADER);
-    // output.extend_from_slice(&sps);
+        if let Some(next_header) = next_header(&self.hevc_bytes[cursor..]) {
+            let next_header = next_header + cursor;
+            let nal = Nal { nal_type, data: &self.hevc_bytes[nal_start..next_header] };
 
-    // output.extend_from_slice(HEADER);
-    // output.extend_from_slice(&pps);
+            self.hevc_bytes = &self.hevc_bytes[next_header..];
 
-    // let mut buffer_offset = 0;
+            Some(nal)
+        } else {
+            let nal = Nal { nal_type, data: &self.hevc_bytes[nal_start..] };
 
-    // while buffer_offset < (hevc_data.len() - HEADER.len()) {
-    //     let mut nal_len = u32::from_ne_bytes([
-    //         hevc_data[buffer_offset],
-    //         hevc_data[(buffer_offset + 1)],
-    //         hevc_data[(buffer_offset + 2)],
-    //         hevc_data[(buffer_offset + 3)],
-    //     ]);
-    //     nal_len = u32::from_be(nal_len);
-    //     dbg!(nal_len);
+            self.hevc_bytes = &[];
 
-    //     output.extend_from_slice(HEADER);
-    //     let hevc_offset = buffer_offset + HEADER.len();
-    //     output.extend_from_slice(&hevc_data[hevc_offset..(hevc_offset + nal_len as usize)]);
+            Some(nal)
+        }
+    }
+}
 
-    //     buffer_offset += HEADER.len();
-    //     buffer_offset += nal_len as usize;
-    // }
+fn next_header(data: &[u8]) -> Option<usize> {
+    if data.len() < 3 {
+        return None;
+    }
 
-    // std::mem::forget(vps);
-    // std::mem::forget(sps);
-    // std::mem::forget(pps);
+    for i in 2..(data.len() - 1) {
+        if data[i] == 1 {
+            let last_two_are_zero = data[i - 1] == 0 && data[i - 2] == 0;
 
-    // std::fs::write("out.hevc", &output).unwrap();
+            if last_two_are_zero && data[i - 3] == 0 {
+                return Some(i - 3);
+            }
 
-    // unsafe {
-    //     if let Some(custom_val) = (source_frame_ref_con as *mut u32).as_mut() {
-    //         *custom_val = 37;
-    //     }
-    // }
+            if last_two_are_zero {
+                return Some(i - 2);
+            }
+        }
+    }
 
-    // dbg!(hevc_data.len());
+    None
+}
+
+// #[repr(u8)]
+// enum NalType {
+//     Vps = 32,
+//     Sps = 33,
+//     Pps = 34,
+// }
+
+struct Nal<'a> {
+    // nal_type: NalType,
+    nal_type: u8,
+    data: &'a [u8],
 }
 
 fn main() {
+    let hevc_bytes = include_bytes!("../out.hevc");
+
+    let mut vps_slice: Option<&[u8]> = None;
+    let mut sps_slice: Option<&[u8]> = None;
+    let mut pps_slice: Option<&[u8]> = None;
+    let mut _idr_slice: Option<&[u8]> = None;
+
+    let nal_iter = NalIterator::new(hevc_bytes);
+
+    for nal in nal_iter {
+        println!("NAL: {:?}, size: {}", nal.nal_type, nal.data.len());
+
+        if nal.nal_type == 32 {
+            vps_slice = Some(nal.data);
+        }
+
+        if nal.nal_type == 33 {
+            sps_slice = Some(nal.data);
+        }
+
+        if nal.nal_type == 34 {
+            pps_slice = Some(nal.data);
+        }
+
+        if nal.nal_type == 20 {
+            _idr_slice = Some(nal.data);
+        }
+    }
+
     let _frame_width = 1280usize;
     let _frame_height = 720usize;
 
@@ -121,24 +162,10 @@ fn main() {
 
     let format_description = unsafe {
         let mut format_ref = std::mem::MaybeUninit::<CMVideoFormatDescriptionRef>::uninit();
-        // CMVideoFormatDescriptionCreate(
-        //     std::ptr::null(),       // Allocator
-        //     kCMVideoCodecType_HEVC, // codec type
-        //     frame_width as i32,     // width
-        //     frame_height as i32,    // height
-        //     std::ptr::null(),       // extensions
-        //     format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef,
-        // );
 
-        // TODO(bschwind) - Hardcoded for now, but extract from the HEVC stream later
-        let vps: Vec<u8> = vec![
-            64, 1, 12, 1, 255, 255, 1, 96, 0, 0, 3, 0, 176, 0, 0, 3, 0, 0, 3, 0, 150, 21, 192, 144,
-        ];
-        let sps: Vec<u8> = vec![
-            66, 1, 1, 1, 96, 0, 0, 3, 0, 176, 0, 0, 3, 0, 0, 3, 0, 150, 160, 2, 128, 128, 45, 22,
-            32, 87, 185, 22, 85, 53, 2, 2, 2, 164, 2,
-        ];
-        let pps: Vec<u8> = vec![68, 1, 192, 44, 188, 20, 201];
+        let vps = vps_slice.unwrap();
+        let sps = sps_slice.unwrap();
+        let pps = pps_slice.unwrap();
 
         let parameter_set_sizes = vec![vps.len(), sps.len(), pps.len()];
         let parameter_sets = vec![vps.as_ptr(), sps.as_ptr(), pps.as_ptr()];
@@ -181,66 +208,4 @@ fn main() {
     }
 
     let _compression_session = unsafe { decompression_ref.assume_init() };
-
-    // // Create the frame to encode
-    // // let mut frame_data = vec![0u8; (frame_width * frame_height * 4) as usize];
-    // let frame_data = make_image_frame(frame_width, frame_height);
-
-    // println!("Uncompressed size: {}", frame_data.len());
-
-    // let mut pixel_buffer_ref = std::mem::MaybeUninit::<CVPixelBufferRef>::uninit();
-    // let k_cvpixel_format_type_32_argb = 0x00000020; // TODO(bschwind) - get this from CoreVideo
-    // let pixel_buffer_create_status = unsafe {
-    //     CVPixelBufferCreateWithBytes(
-    //         std::ptr::null(),
-    //         frame_width as usize,
-    //         frame_height as usize,
-    //         k_cvpixel_format_type_32_argb,
-    //         frame_data.as_ptr() as *mut c_void,
-    //         (4 * frame_width) as usize, // bytes per row
-    //         None,
-    //         std::ptr::null_mut(),
-    //         std::ptr::null(),
-    //         pixel_buffer_ref.as_mut_ptr() as *mut CVPixelBufferRef,
-    //     )
-    // };
-
-    // if pixel_buffer_create_status != 0 {
-    //     println!("Failed to create Pixel Buffer: {}", pixel_buffer_create_status);
-    //     return;
-    // }
-
-    // let pixel_buffer = unsafe { pixel_buffer_ref.assume_init() };
-
-    // println!("Got a pixel buffer, good to go!");
-
-    // let frame_time = CMTime { value: 0i64, timescale: 1i32, flags: 0u32, epoch: 0i64 };
-
-    // let invalid_duration = CMTime { value: 0i64, timescale: 0i32, flags: 0u32, epoch: 0i64 };
-
-    // let mut custom_val = 0u32;
-
-    // let encode_start = std::time::Instant::now();
-    // // Encode the frame
-    // let encode_status = unsafe {
-    //     VTCompressionSessionEncodeFrame(
-    //         compression_session,
-    //         pixel_buffer,
-    //         frame_time,                                 // Presentation timestamp
-    //         invalid_duration,                           // Frame duration
-    //         std::ptr::null(),                           // Frame Properties
-    //         &mut custom_val as *mut u32 as *mut c_void, // Source frame ref con
-    //         std::ptr::null_mut(),                       // Info flags out
-    //     );
-    // };
-
-    // println!("Encode status: {:?}", encode_status);
-
-    // // Wait for the encode to finish.
-    // let _ = unsafe {
-    //     VTCompressionSessionCompleteFrames(compression_session, invalid_duration);
-    // };
-
-    // println!("Took: {:?}", encode_start.elapsed());
-    // println!("Our custom value is {}", custom_val);
 }
