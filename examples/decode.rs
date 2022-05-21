@@ -33,7 +33,18 @@ struct NalIterator<'a> {
 
 impl<'a> NalIterator<'a> {
     fn new(hevc_bytes: &'a [u8]) -> Self {
-        Self { hevc_bytes }
+        let mut cursor = 0;
+
+        while cursor < hevc_bytes.len() && hevc_bytes[cursor] != 1 {
+            cursor += 1;
+        }
+
+        if cursor + 1 >= hevc_bytes.len() {
+            return Self { hevc_bytes: &[] };
+        }
+
+        cursor += 1;
+        Self { hevc_bytes: &hevc_bytes[cursor..] }
     }
 }
 
@@ -45,30 +56,16 @@ impl<'a> Iterator for NalIterator<'a> {
             return None;
         }
 
-        let mut cursor = 0;
+        let nal_type = (self.hevc_bytes[0] >> 1) & 0b0011_1111;
 
-        while cursor < self.hevc_bytes.len() && self.hevc_bytes[cursor] != 1 {
-            cursor += 1;
-        }
+        if let Some((next_header_start, next_header_end)) = next_header(&self.hevc_bytes) {
+            let nal = Nal { nal_type, data: &self.hevc_bytes[..next_header_start] };
 
-        if cursor + 1 >= self.hevc_bytes.len() {
-            return None;
-        }
-
-        cursor += 1;
-
-        let nal_start = cursor;
-        let nal_type = (self.hevc_bytes[cursor] >> 1) & 0b0011_1111;
-
-        if let Some(next_header) = next_header(&self.hevc_bytes[cursor..]) {
-            let next_header = next_header + cursor;
-            let nal = Nal { nal_type, data: &self.hevc_bytes[nal_start..next_header] };
-
-            self.hevc_bytes = &self.hevc_bytes[next_header..];
+            self.hevc_bytes = &self.hevc_bytes[(next_header_end + 1)..];
 
             Some(nal)
         } else {
-            let nal = Nal { nal_type, data: &self.hevc_bytes[nal_start..] };
+            let nal = Nal { nal_type, data: &self.hevc_bytes };
 
             self.hevc_bytes = &[];
 
@@ -77,7 +74,7 @@ impl<'a> Iterator for NalIterator<'a> {
     }
 }
 
-fn next_header(data: &[u8]) -> Option<usize> {
+fn next_header(data: &[u8]) -> Option<(usize, usize)> {
     if data.len() < 3 {
         return None;
     }
@@ -86,12 +83,12 @@ fn next_header(data: &[u8]) -> Option<usize> {
         if data[i] == 1 {
             let last_two_are_zero = data[i - 1] == 0 && data[i - 2] == 0;
 
-            if last_two_are_zero && data[i - 3] == 0 {
-                return Some(i - 3);
-            }
-
             if last_two_are_zero {
-                return Some(i - 2);
+                if data[i - 3] == 0 {
+                    return Some((i - 3, i));
+                } else {
+                    return Some((i - 2, i));
+                }
             }
         }
     }
