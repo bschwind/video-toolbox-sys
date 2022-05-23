@@ -4,7 +4,8 @@
 #![allow(non_upper_case_globals)]
 
 use core_foundation::{
-    base::{Boolean, CFAllocatorRef, OSStatus},
+    array::CFArrayRef,
+    base::{Boolean, CFAllocatorRef, CFIndex, OSStatus},
     dictionary::CFDictionaryRef,
     string::CFStringRef,
 };
@@ -32,9 +33,6 @@ pub type OSType = FourCharCode;
 pub type CMVideoCodecType = FourCharCode;
 pub type CMBlockBufferFlags = u32;
 pub type CMItemCount = CFIndex;
-
-// CoreFoundation Types
-pub type CFIndex = usize; // Technically `long` in Apple's docs.
 
 #[repr(C)]
 pub struct OpaqueCMSampleBuffer {
@@ -99,6 +97,12 @@ pub type VTCompressionOutputCallback = extern "C" fn(
     sample_buffer: CMSampleBufferRef,
 );
 
+#[repr(C)]
+pub struct VTDecompressionOutputCallbackRecord {
+    pub decompression_output_callback: Option<VTDecompressionOutputCallback>,
+    pub decompression_output_ref_con: *mut c_void,
+}
+
 pub type VTDecompressionOutputCallback = extern "C" fn(
     output_callback_ref_con: *mut c_void,
     source_frame_ref_con: *mut c_void,
@@ -156,7 +160,7 @@ extern "C" {
         video_format_description: CMVideoFormatDescriptionRef,
         video_decoder_specification: CFDictionaryRef,
         destination_image_buffer_attributes: CFDictionaryRef,
-        output_callback: Option<VTDecompressionOutputCallback>,
+        output_callback: *const VTDecompressionOutputCallbackRecord,
         decompression_session_out: VTDecompressionSessionRef,
     ) -> OSStatus;
 
@@ -172,6 +176,8 @@ extern "C" {
 // CoreMedia
 #[link(name = "CoreMedia", kind = "framework")]
 extern "C" {
+    pub static kCMSampleAttachmentKey_DisplayImmediately: CFStringRef;
+
     pub fn CMSampleBufferIsValid(sample_buffer: CMSampleBufferRef) -> Boolean;
     pub fn CMSampleBufferGetTotalSampleSize(sample_buffer: CMSampleBufferRef) -> usize;
     pub fn CMSampleBufferGetDataBuffer(sample_buffer: CMSampleBufferRef) -> CMBlockBufferRef;
@@ -190,7 +196,7 @@ extern "C" {
         sample_timing_array: *const c_void, // Actually a CMSampleTimingInfo
         num_sample_size_entry: CMItemCount,
         sample_size_array: *const usize,
-        sample_buffer_out: *mut CMSampleBufferRef,
+        sample_buffer_out: CMSampleBufferRef,
     ) -> OSStatus;
     pub fn CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
         video_desc: CMFormatDescriptionRef,
@@ -232,8 +238,12 @@ extern "C" {
         offset_to_data: usize,
         data_length: usize,
         flags: CMBlockBufferFlags,
-        block_buffer_out: *mut CMBlockBufferRef,
+        block_buffer_out: CMBlockBufferRef,
     ) -> OSStatus;
+    pub fn CMSampleBufferGetSampleAttachmentsArray(
+        sample_buffer: CMSampleBufferRef,
+        create_if_necessary: bool,
+    ) -> CFArrayRef;
 }
 
 // CoreVideo

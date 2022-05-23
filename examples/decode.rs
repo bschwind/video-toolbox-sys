@@ -1,19 +1,24 @@
 use core::ffi::c_void;
 use core_foundation::{
+    array::CFArrayGetValueAtIndex,
     base::{CFIndexConvertible, OSStatus},
     boolean::CFBoolean,
     dictionary::{
         kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
+        CFDictionarySetValue,
     },
+    number::kCFBooleanTrue,
     string::CFStringRef,
 };
 use std::convert::TryInto;
 use video_toolbox_sys::{
+    kCMSampleAttachmentKey_DisplayImmediately,
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
-    CMBlockBufferCreateWithMemoryBlock, CMBlockBufferRef, CMSampleBufferCreate, CMSampleBufferRef,
-    CMTime, CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
-    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate,
-    VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
+    CMBlockBufferCreateWithMemoryBlock, CMBlockBufferRef, CMSampleBufferCreate,
+    CMSampleBufferGetSampleAttachmentsArray, CMSampleBufferRef, CMTime,
+    CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
+    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord,
+    VTDecompressionSessionCreate, VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
 };
 
 extern "C" fn decode_callback(
@@ -190,13 +195,18 @@ fn main() {
     // Create the decoder
     let mut decompression_ref = std::mem::MaybeUninit::<VTDecompressionSessionRef>::uninit();
 
+    let callback_record = VTDecompressionOutputCallbackRecord {
+        decompression_output_callback: Some(decode_callback),
+        decompression_output_ref_con: std::ptr::null_mut(),
+    };
+
     let create_status = unsafe {
         VTDecompressionSessionCreate(
             std::ptr::null(),                                            // Allocator
             format_description,                                          // Format Description
             decoder_specification,                                       // Decoder specification,
-            std::ptr::null(),      // Dest image buffer attributes
-            Some(decode_callback), // Output callback, pass NULL if you're using VTDecompressionSessionDecodeFrameWithOutputHandler
+            std::ptr::null(), // Dest image buffer attributes
+            &callback_record, // Output callback, pass NULL if you're using VTDecompressionSessionDecodeFrameWithOutputHandler
             decompression_ref.as_mut_ptr() as VTDecompressionSessionRef, // Decompression session out
         )
     };
@@ -213,17 +223,21 @@ fn main() {
     let block_buffer = unsafe {
         let mut block_buffer_out = std::mem::MaybeUninit::<CMBlockBufferRef>::uninit();
 
-        CMBlockBufferCreateWithMemoryBlock(
-            std::ptr::null(),                     // Allocator
-            frame_data.as_ptr() as *const c_void, // Memory block
-            frame_data.len(),                     // Block length
-            std::ptr::null(),                     // Block allocator
-            std::ptr::null(),                     // Custom block source
-            0,                                    // Offset to data
-            frame_data.len(),                     // Data length
-            0,                                    // Flags
-            block_buffer_out.as_mut_ptr(),        // Block buffer out
+        let status = CMBlockBufferCreateWithMemoryBlock(
+            std::ptr::null(),                                  // Allocator
+            frame_data.as_ptr() as *const c_void,              // Memory block
+            frame_data.len(),                                  // Block length
+            std::ptr::null(),                                  // Block allocator
+            std::ptr::null(),                                  // Custom block source
+            0,                                                 // Offset to data
+            frame_data.len(),                                  // Data length
+            0,                                                 // Flags
+            block_buffer_out.as_mut_ptr() as CMBlockBufferRef, // Block buffer out
         );
+
+        if status != 0 {
+            println!("Error creating CMBlockBuffer");
+        }
 
         block_buffer_out.assume_init()
     };
@@ -232,23 +246,37 @@ fn main() {
         let sample_size = frame_data.len();
         let mut sample_buffer_out = std::mem::MaybeUninit::<CMSampleBufferRef>::uninit();
 
-        CMSampleBufferCreate(
-            std::ptr::null(),               // Allocator
-            block_buffer,                   // Data
-            true,                           // Data Ready
-            None,                           // Make data ready callback
-            std::ptr::null_mut(),           // Make data ready callback ref con
-            format_description,             // Format description
-            1,                              // Num samples
-            0,                              // Num sample timing entries
-            std::ptr::null(),               // Sample timing array
-            1,                              // Num sample timing entries
-            &sample_size,                   // Sample size
-            sample_buffer_out.as_mut_ptr(), // Sample buffer out
+        let status = CMSampleBufferCreate(
+            std::ptr::null(),                                    // Allocator
+            block_buffer,                                        // Data
+            true,                                                // Data Ready
+            None,                                                // Make data ready callback
+            std::ptr::null_mut(),                                // Make data ready callback ref con
+            format_description,                                  // Format description
+            1,                                                   // Num samples
+            0,                                                   // Num sample timing entries
+            std::ptr::null(),                                    // Sample timing array
+            1,                                                   // Num sample timing entries
+            &sample_size,                                        // Sample size
+            sample_buffer_out.as_mut_ptr() as CMSampleBufferRef, // Sample buffer out
         );
+
+        if status != 0 {
+            println!("Error creating CMSampleBuffer");
+        }
 
         sample_buffer_out.assume_init()
     };
+
+    let attachments = unsafe { CMSampleBufferGetSampleAttachmentsArray(sample_buffer, true) };
+    let dict = unsafe { CFArrayGetValueAtIndex(attachments, 0) };
+    unsafe {
+        CFDictionarySetValue(
+            dict as *mut _,
+            kCMSampleAttachmentKey_DisplayImmediately as *const c_void,
+            kCFBooleanTrue as *const c_void,
+        );
+    }
 
     unsafe {
         VTDecompressionSessionDecodeFrame(
