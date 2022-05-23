@@ -24,11 +24,17 @@ pub type VTCompressionSessionRef = *mut OpaqueVTCompressionSession;
 pub type VTDecompressionSessionRef = *mut OpaqueVTDecompressionSession;
 pub type VTEncodeInfoFlags = u32;
 pub type VTDecodeInfoFlags = u32;
+pub type VTDecodeFrameFlags = u32;
 
 // CoreMedia Types
 pub type FourCharCode = u32;
 pub type OSType = FourCharCode;
 pub type CMVideoCodecType = FourCharCode;
+pub type CMBlockBufferFlags = u32;
+pub type CMItemCount = CFIndex;
+
+// CoreFoundation Types
+pub type CFIndex = usize; // Technically `long` in Apple's docs.
 
 #[repr(C)]
 pub struct OpaqueCMSampleBuffer {
@@ -103,6 +109,11 @@ pub type VTDecompressionOutputCallback = extern "C" fn(
     presentation_duration: CMTime,
 );
 
+pub type CMSampleBufferMakeDataReadyCallback = extern "C" fn(
+    sample_buffer: CMSampleBufferRef,
+    make_data_ready_ref_con: *mut c_void,
+) -> OSStatus;
+
 // Encoding
 #[link(name = "VideoToolbox", kind = "framework")]
 extern "C" {
@@ -148,6 +159,14 @@ extern "C" {
         output_callback: Option<VTDecompressionOutputCallback>,
         decompression_session_out: VTDecompressionSessionRef,
     ) -> OSStatus;
+
+    pub fn VTDecompressionSessionDecodeFrame(
+        session: VTDecompressionSessionRef,
+        sample_buffer: CMSampleBufferRef,
+        decode_flags: VTDecodeFrameFlags,
+        source_frame_ref_con: *const c_void,
+        info_flags_out: *mut VTDecodeInfoFlags, // TODO - is it mutable?
+    ) -> OSStatus;
 }
 
 // CoreMedia
@@ -159,6 +178,20 @@ extern "C" {
     pub fn CMSampleBufferGetFormatDescription(
         sample_buffer: CMSampleBufferRef,
     ) -> CMFormatDescriptionRef;
+    pub fn CMSampleBufferCreate(
+        allocator: CFAllocatorRef,
+        data: CMBlockBufferRef,
+        data_ready: bool,
+        make_data_ready_callback: Option<CMSampleBufferMakeDataReadyCallback>, // TODO - Make this an Option?
+        make_data_ready_ref_con: *mut c_void,
+        format_description: CMFormatDescriptionRef,
+        num_samples: CMItemCount,
+        num_sample_timing_entries: CMItemCount,
+        sample_timing_array: *const c_void, // Actually a CMSampleTimingInfo
+        num_sample_size_entry: CMItemCount,
+        sample_size_array: *const usize,
+        sample_buffer_out: *mut CMSampleBufferRef,
+    ) -> OSStatus;
     pub fn CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
         video_desc: CMFormatDescriptionRef,
         parameter_set_index: usize,
@@ -189,6 +222,17 @@ extern "C" {
         nal_unit_header_length: i32,
         extensions: CFDictionaryRef,
         format_description_out: CMVideoFormatDescriptionRef,
+    ) -> OSStatus;
+    pub fn CMBlockBufferCreateWithMemoryBlock(
+        allocator: CFAllocatorRef,
+        memory_block: *const c_void,
+        block_length: usize,
+        block_allocator: CFAllocatorRef,
+        custom_block_source: *const c_void, // Pointer to CMBlockBufferCustomBlockSource
+        offset_to_data: usize,
+        data_length: usize,
+        flags: CMBlockBufferFlags,
+        block_buffer_out: *mut CMBlockBufferRef,
     ) -> OSStatus;
 }
 

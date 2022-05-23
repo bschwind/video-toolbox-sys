@@ -9,9 +9,11 @@ use core_foundation::{
 };
 use std::convert::TryInto;
 use video_toolbox_sys::{
-    kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, CMTime,
-    CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
-    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate, VTDecompressionSessionRef,
+    kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
+    CMBlockBufferCreateWithMemoryBlock, CMBlockBufferRef, CMSampleBufferCreate, CMSampleBufferRef,
+    CMTime, CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
+    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionSessionCreate,
+    VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
 };
 
 extern "C" fn decode_callback(
@@ -115,7 +117,7 @@ fn main() {
     let mut vps_slice: Option<&[u8]> = None;
     let mut sps_slice: Option<&[u8]> = None;
     let mut pps_slice: Option<&[u8]> = None;
-    let mut _idr_slice: Option<&[u8]> = None;
+    let mut idr_slice: Option<&[u8]> = None;
 
     let nal_iter = NalIterator::new(hevc_bytes);
 
@@ -135,7 +137,7 @@ fn main() {
         }
 
         if nal.nal_type == 20 {
-            _idr_slice = Some(nal.data);
+            idr_slice = Some(nal.data);
         }
     }
 
@@ -172,9 +174,9 @@ fn main() {
             parameter_sets.len(), // parameter set count
             parameter_sets.as_ptr(),
             parameter_set_sizes.as_ptr(),
-            4,                // NAL unit header length
-            std::ptr::null(), // extensions
-            format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef,
+            4,                                                      // NAL unit header length
+            std::ptr::null(),                                       // extensions
+            format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef, // Format ref out
         );
 
         let format = format_ref.assume_init();
@@ -190,12 +192,12 @@ fn main() {
 
     let create_status = unsafe {
         VTDecompressionSessionCreate(
-            std::ptr::null(),      // Allocator
-            format_description,    // Format Description
-            decoder_specification, // Decoder specification,
+            std::ptr::null(),                                            // Allocator
+            format_description,                                          // Format Description
+            decoder_specification,                                       // Decoder specification,
             std::ptr::null(),      // Dest image buffer attributes
             Some(decode_callback), // Output callback, pass NULL if you're using VTDecompressionSessionDecodeFrameWithOutputHandler
-            decompression_ref.as_mut_ptr() as VTDecompressionSessionRef,
+            decompression_ref.as_mut_ptr() as VTDecompressionSessionRef, // Decompression session out
         )
     };
 
@@ -204,5 +206,57 @@ fn main() {
         return;
     }
 
-    let _compression_session = unsafe { decompression_ref.assume_init() };
+    let decompression_session = unsafe { decompression_ref.assume_init() };
+
+    let frame_data = idr_slice.expect("Should have frame data");
+
+    let block_buffer = unsafe {
+        let mut block_buffer_out = std::mem::MaybeUninit::<CMBlockBufferRef>::uninit();
+
+        CMBlockBufferCreateWithMemoryBlock(
+            std::ptr::null(),                     // Allocator
+            frame_data.as_ptr() as *const c_void, // Memory block
+            frame_data.len(),                     // Block length
+            std::ptr::null(),                     // Block allocator
+            std::ptr::null(),                     // Custom block source
+            0,                                    // Offset to data
+            frame_data.len(),                     // Data length
+            0,                                    // Flags
+            block_buffer_out.as_mut_ptr(),        // Block buffer out
+        );
+
+        block_buffer_out.assume_init()
+    };
+
+    let sample_buffer = unsafe {
+        let sample_size = frame_data.len();
+        let mut sample_buffer_out = std::mem::MaybeUninit::<CMSampleBufferRef>::uninit();
+
+        CMSampleBufferCreate(
+            std::ptr::null(),               // Allocator
+            block_buffer,                   // Data
+            true,                           // Data Ready
+            None,                           // Make data ready callback
+            std::ptr::null_mut(),           // Make data ready callback ref con
+            format_description,             // Format description
+            1,                              // Num samples
+            0,                              // Num sample timing entries
+            std::ptr::null(),               // Sample timing array
+            1,                              // Num sample timing entries
+            &sample_size,                   // Sample size
+            sample_buffer_out.as_mut_ptr(), // Sample buffer out
+        );
+
+        sample_buffer_out.assume_init()
+    };
+
+    unsafe {
+        VTDecompressionSessionDecodeFrame(
+            decompression_session,
+            sample_buffer,
+            0,                    // Decode flags
+            std::ptr::null(),     // User data
+            std::ptr::null_mut(), // Info flags out
+        );
+    }
 }
