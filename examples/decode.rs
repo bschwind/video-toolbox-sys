@@ -220,6 +220,11 @@ fn main() {
 
     let frame_data = idr_slice.expect("Should have frame data");
 
+    let mut length_prefixed_data = vec![];
+    length_prefixed_data.extend_from_slice(&(frame_data.len() as u32).to_be_bytes());
+    length_prefixed_data.extend_from_slice(frame_data);
+    let frame_data = length_prefixed_data;
+
     let block_buffer = unsafe {
         let mut block_buffer_out = std::mem::MaybeUninit::<CMBlockBufferRef>::uninit();
 
