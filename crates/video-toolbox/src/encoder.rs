@@ -19,7 +19,7 @@ use video_toolbox_sys::{
 };
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum EncodeError {
     #[error("Initialization Error: {0}")]
     InitializationError(i32),
 
@@ -27,13 +27,13 @@ pub enum Error {
     PixelBufferCreationError(i32),
 }
 
-unsafe impl Send for Encoder {}
-
 pub struct Encoder {
     width: u32,
     height: u32,
     encode_session: *mut OpaqueVTCompressionSession,
 }
+
+unsafe impl Send for Encoder {}
 
 impl Drop for Encoder {
     fn drop(&mut self) {
@@ -42,7 +42,7 @@ impl Drop for Encoder {
 }
 
 impl Encoder {
-    pub fn new(width: u32, height: u32) -> Result<Self, Error> {
+    pub fn new(width: u32, height: u32) -> Result<Self, EncodeError> {
         let mut encode_ref = std::mem::MaybeUninit::<VTCompressionSessionRef>::uninit();
 
         // Require hardware-accelerated encoding.
@@ -80,7 +80,7 @@ impl Encoder {
 
         if create_status != 0 {
             println!("Failed to create VT Compression Session: {}", create_status);
-            return Err(Error::InitializationError(create_status));
+            return Err(EncodeError::InitializationError(create_status));
         }
 
         let encode_session = unsafe { encode_ref.assume_init() };
@@ -97,7 +97,7 @@ impl Encoder {
     }
 
     /// Encodes an uncompressed video frame from `src` into `dst`.
-    pub fn encode_blocking(&mut self, src: &[u8], dst: &mut [u8]) -> Result<usize, Error> {
+    pub fn encode_blocking(&mut self, src: &[u8], dst: &mut [u8]) -> Result<usize, EncodeError> {
         let mut pixel_buffer_ref = std::mem::MaybeUninit::<CVPixelBufferRef>::uninit();
         let k_cvpixel_format_type_32_argb = 0x00000020; // TODO(bschwind) - get this from CoreVideo
         let pixel_buffer_create_status = unsafe {
@@ -117,7 +117,7 @@ impl Encoder {
 
         if pixel_buffer_create_status != 0 {
             println!("Failed to create Pixel Buffer: {}", pixel_buffer_create_status);
-            return Err(Error::PixelBufferCreationError(pixel_buffer_create_status));
+            return Err(EncodeError::PixelBufferCreationError(pixel_buffer_create_status));
         }
 
         let pixel_buffer = unsafe { pixel_buffer_ref.assume_init() };
