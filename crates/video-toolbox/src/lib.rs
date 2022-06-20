@@ -66,14 +66,14 @@ impl<'a> Iterator for NalIterator<'a> {
         let nal_type_byte = (self.hevc_bytes[0] >> 1) & 0b0011_1111;
         let nal_type = NalType::from(nal_type_byte);
 
-        if let Some((next_header_start, next_header_end)) = Self::next_header(&self.hevc_bytes) {
+        if let Some((next_header_start, next_header_end)) = Self::next_header(self.hevc_bytes) {
             let nal = Nal { nal_type, data: &self.hevc_bytes[..next_header_start] };
 
             self.hevc_bytes = &self.hevc_bytes[(next_header_end + 1)..];
 
             Some(nal)
         } else {
-            let nal = Nal { nal_type, data: &self.hevc_bytes };
+            let nal = Nal { nal_type, data: self.hevc_bytes };
 
             self.hevc_bytes = &[];
 

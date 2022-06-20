@@ -73,8 +73,8 @@ impl Decoder {
         self.height
     }
 
-    pub fn decode_blocking(&mut self, src: &[u8], _dst: &mut [u8]) -> Result<usize, DecodeError> {
-        self.decoder_internal.decode(src)?;
+    pub fn decode_blocking(&mut self, src: &[u8], dst: &mut [u8]) -> Result<usize, DecodeError> {
+        self.decoder_internal.decode(src, dst)?;
         Ok((self.width * self.height * 4) as usize)
     }
 }
@@ -104,7 +104,7 @@ impl DecoderInternal {
                 std::ptr::null(),
                 std::mem::transmute(keys.as_ptr()),
                 std::mem::transmute(values.as_ptr()),
-                keys.len().to_CFIndex().try_into().unwrap(),
+                keys.len().to_CFIndex(),
                 &kCFTypeDictionaryKeyCallBacks,
                 &kCFTypeDictionaryValueCallBacks,
             )
@@ -126,9 +126,7 @@ impl DecoderInternal {
                 format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef, // Format ref out
             );
 
-            let format = format_ref.assume_init();
-
-            format
+            format_ref.assume_init()
         };
 
         // https://github.com/peter-iakovlev/TelegramUI/blob/e8b193443d1b84f00390138a82c44ebfcceb496a/TelegramUI/FFMpegMediaFrameSourceContextHelpers.swift#L67-L92
@@ -166,7 +164,7 @@ impl DecoderInternal {
         Ok(())
     }
 
-    fn decode(&mut self, src: &[u8]) -> Result<(), DecodeError> {
+    fn decode(&mut self, src: &[u8], dst: &mut [u8]) -> Result<(), DecodeError> {
         let nal_iter = NalIterator::new(src);
 
         let frame_data = if let Some(_decode_session) = self.decode_session {
@@ -274,13 +272,16 @@ impl DecoderInternal {
             );
         }
 
+        // TODO - allocate in a Box.
+        let mut dst_buffer = DstBuffer { data: dst.as_mut_ptr(), len: dst.len(), written_size: 0 };
+
         unsafe {
             VTDecompressionSessionDecodeFrame(
                 self.decode_session.unwrap(),
                 sample_buffer,
-                0,                    // Decode flags
-                std::ptr::null(),     // User data
-                std::ptr::null_mut(), // Info flags out
+                0,                                                // Decode flags
+                &mut dst_buffer as *mut DstBuffer as *mut c_void, // User data
+                std::ptr::null_mut(),                             // Info flags out
             );
         }
 
@@ -292,7 +293,7 @@ impl DecoderInternal {
 
 extern "C" fn decode_callback(
     _output_callback_ref_con: *mut c_void,
-    _source_frame_ref_con: *mut c_void,
+    source_frame_ref_con: *mut c_void,
     status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
     _image_buffer: CVImageBufferRef,
@@ -301,4 +302,21 @@ extern "C" fn decode_callback(
 ) {
     println!("decode_callback");
     println!("Status: {}", status);
+
+    unsafe {
+        if let Some(_dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
+            // Copy frame to dst_buffer
+            // dst_buffer.written_size = hevc_data.len();
+
+            // let dst_slice = std::slice::from_raw_parts_mut(dst_buffer.data, dst_buffer.len);
+            // dst_slice[..hevc_data.len()].copy_from_slice(&hevc_data);
+        }
+    }
+}
+
+#[allow(unused)]
+struct DstBuffer {
+    data: *mut u8,
+    len: usize,
+    written_size: usize,
 }
