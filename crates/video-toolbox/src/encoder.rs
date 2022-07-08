@@ -141,18 +141,16 @@ impl Encoder {
                 std::ptr::null(),                                 // Frame Properties
                 &mut dst_buffer as *mut DstBuffer as *mut c_void, // Source frame ref con
                 std::ptr::null_mut(),                             // Info flags out
-            );
+            )
         };
 
         println!("Encode status: {:?}", encode_status);
 
         // Wait for the encode to finish.
-        let _ = unsafe {
-            VTCompressionSessionCompleteFrames(self.encode_session, invalid_duration);
-        };
+        let _ =
+            unsafe { VTCompressionSessionCompleteFrames(self.encode_session, invalid_duration) };
 
         let written_size = dst_buffer.written_size;
-        std::mem::forget(dst_buffer);
 
         Ok(written_size)
     }
