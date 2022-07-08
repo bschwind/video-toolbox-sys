@@ -1,0 +1,9 @@
+[package]
+name = "video-toolbox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+core-foundation = "0.9"
+thiserror = "1"
+video-toolbox-sys = { path = "../video-toolbox-sys" }

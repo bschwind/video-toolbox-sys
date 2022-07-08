@@ -188,7 +188,7 @@ extern "C" {
         allocator: CFAllocatorRef,
         data: CMBlockBufferRef,
         data_ready: bool,
-        make_data_ready_callback: Option<CMSampleBufferMakeDataReadyCallback>, // TODO - Make this an Option?
+        make_data_ready_callback: Option<CMSampleBufferMakeDataReadyCallback>,
         make_data_ready_ref_con: *mut c_void,
         format_description: CMFormatDescriptionRef,
         num_samples: CMItemCount,
