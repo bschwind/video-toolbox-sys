@@ -11,8 +11,10 @@ fn test_encode() {
     let mut dst = vec![0u8; width as usize * height as usize * 4];
 
     let encoded_size = encoder.encode_blocking(&src_frame, &mut dst).unwrap();
+    println!("Encoded size for frame 1: {}", encoded_size);
 
-    println!("Encoded size: {}", encoded_size);
+    let encoded_size = encoder.encode_blocking(&src_frame, &mut dst).unwrap();
+    println!("Encoded size for frame 2: {}", encoded_size);
 }
 
 fn make_image_frame(width: usize, height: usize) -> Vec<u8> {

@@ -194,6 +194,7 @@ extern "C" {
 #[link(name = "CoreMedia", kind = "framework")]
 extern "C" {
     pub static kCMSampleAttachmentKey_DisplayImmediately: CFStringRef;
+    pub static kCMSampleAttachmentKey_NotSync: CFStringRef;
 
     pub fn CMSampleBufferIsValid(sample_buffer: CMSampleBufferRef) -> Boolean;
     pub fn CMSampleBufferGetTotalSampleSize(sample_buffer: CMSampleBufferRef) -> usize;

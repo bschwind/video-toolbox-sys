@@ -46,6 +46,9 @@ pub enum DecodeError {
     #[error("An intermediate frame was received before an I frame")]
     MissingIFrame,
 
+    #[error("No intermediate frames were in the data payload")]
+    MissingPFrame,
+
     #[error("Block Buffer Creation Error: {0}")]
     BlockBufferCreationError(i32),
 
@@ -215,9 +218,18 @@ impl DecoderInternal {
         let nal_iter = NalIterator::new(src);
 
         let frame_data = if let Some(_decode_session) = self.decode_session {
+            let mut p_slice: Option<&[u8]> = None;
+
+            for nal in nal_iter {
+                println!("NAL Type: {:?}", nal.nal_type);
+
+                if nal.nal_type == NalType::CodedSliceTrailR {
+                    p_slice = Some(nal.data);
+                }
+            }
             // If we have a decode session, look for P frames.
             // TODO - Loop through NAL units and assign a P frame to frame_data.
-            unimplemented!()
+            p_slice.ok_or(DecodeError::MissingPFrame)?
         } else {
             // If we don't have a decode session, we need VPS, SPS, and PPS
             // NAL Units, along with an I Frame NAL Unit (IDR).
@@ -227,6 +239,7 @@ impl DecoderInternal {
             let mut idr_slice: Option<&[u8]> = None;
 
             for nal in nal_iter {
+                println!("NAL Type: {:?}", nal.nal_type);
                 if nal.nal_type == NalType::Vps {
                     vps_slice = Some(nal.data);
                 }
@@ -239,7 +252,9 @@ impl DecoderInternal {
                     pps_slice = Some(nal.data);
                 }
 
-                if nal.nal_type == NalType::CodedSliceIdrNLp {
+                if nal.nal_type == NalType::CodedSliceIdrNLp
+                    || nal.nal_type == NalType::CodedSliceIdrWRadl
+                {
                     idr_slice = Some(nal.data);
                 }
             }

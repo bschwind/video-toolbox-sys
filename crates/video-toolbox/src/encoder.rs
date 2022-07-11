@@ -1,21 +1,26 @@
 use core::ffi::c_void;
 use core_foundation::{
+    array::{CFArrayGetCount, CFArrayGetValueAtIndex},
     base::{CFIndexConvertible, OSStatus},
     boolean::CFBoolean,
     dictionary::{
         kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
+        CFDictionaryGetValueIfPresent, CFDictionaryRef,
     },
+    number::{CFBooleanGetValue, CFBooleanRef},
     string::CFStringRef,
 };
 use thiserror::Error;
 use video_toolbox_sys::{
-    kCMVideoCodecType_HEVC, kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+    kCMSampleAttachmentKey_NotSync, kCMVideoCodecType_HEVC,
+    kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
     CMBlockBufferCopyDataBytes, CMFormatDescriptionRef, CMSampleBufferGetDataBuffer,
-    CMSampleBufferGetFormatDescription, CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid,
-    CMSampleBufferRef, CMTime, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex,
-    CVPixelBufferCreateWithBytes, CVPixelBufferRef, OpaqueVTCompressionSession,
-    VTCompressionSessionCompleteFrames, VTCompressionSessionCreate,
-    VTCompressionSessionEncodeFrame, VTCompressionSessionRef, VTEncodeInfoFlags,
+    CMSampleBufferGetFormatDescription, CMSampleBufferGetSampleAttachmentsArray,
+    CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid, CMSampleBufferRef, CMTime,
+    CMVideoFormatDescriptionGetHEVCParameterSetAtIndex, CVPixelBufferCreateWithBytes,
+    CVPixelBufferRef, OpaqueVTCompressionSession, VTCompressionSessionCompleteFrames,
+    VTCompressionSessionCreate, VTCompressionSessionEncodeFrame, VTCompressionSessionRef,
+    VTEncodeInfoFlags,
 };
 
 #[derive(Debug, Error)]
@@ -165,7 +170,27 @@ extern "C" fn encode_callback(
 ) {
     println!("encode_callback");
 
+    let attachments = unsafe { CMSampleBufferGetSampleAttachmentsArray(sample_buffer, false) };
+    let is_iframe = unsafe {
+        if CFArrayGetCount(attachments) > 0 {
+            let mut is_iframe = std::mem::MaybeUninit::<CFBooleanRef>::uninit();
+
+            let attachment_dictionary = CFArrayGetValueAtIndex(attachments, 0) as CFDictionaryRef;
+            let value_present = CFDictionaryGetValueIfPresent(
+                attachment_dictionary,
+                kCMSampleAttachmentKey_NotSync as *const c_void,
+                is_iframe.as_mut_ptr() as *mut *const c_void,
+            );
+
+            let is_iframe = is_iframe.assume_init();
+            value_present == 0 || !CFBooleanGetValue(is_iframe)
+        } else {
+            false
+        }
+    };
+
     println!("Status: {}", status);
+    println!("Is I-frame: {}", is_iframe);
 
     println!("Valid buffer: {}", unsafe { CMSampleBufferIsValid(sample_buffer) });
     // Returns the total size in bytes of sample data in a CMSampleBuffer.
@@ -176,10 +201,6 @@ extern "C" fn encode_callback(
     println!("Data buffer: {:?}", data_buffer);
 
     let format = unsafe { CMSampleBufferGetFormatDescription(sample_buffer) };
-
-    let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
-    let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
-    let pps = get_hevc_param(format, HevcParam::Pps).unwrap();
 
     let mut hevc_data = vec![0u8; data_length];
 
@@ -196,17 +217,35 @@ extern "C" fn encode_callback(
     const HEADER: &[u8; 4] = &[0, 0, 0, 1];
 
     let mut output = vec![];
-    output.extend_from_slice(HEADER);
-    output.extend_from_slice(&vps);
 
-    output.extend_from_slice(HEADER);
-    output.extend_from_slice(&sps);
+    if is_iframe {
+        let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
+        let sps = get_hevc_param(format, HevcParam::Sps).unwrap();
+        let pps = get_hevc_param(format, HevcParam::Pps).unwrap();
 
-    output.extend_from_slice(HEADER);
-    output.extend_from_slice(&pps);
+        output.extend_from_slice(HEADER);
+        output.extend_from_slice(&vps);
+
+        output.extend_from_slice(HEADER);
+        output.extend_from_slice(&sps);
+
+        output.extend_from_slice(HEADER);
+        output.extend_from_slice(&pps);
+
+        std::mem::forget(vps);
+        std::mem::forget(sps);
+        std::mem::forget(pps);
+    }
 
     let mut buffer_offset = 0;
 
+    // VideoToolbox will prefix a 4-byte length value on each
+    // NAL Unit.
+    const LENGTH_PREFIX_SIZE: usize = 4;
+
+    // Convert from AVCC format to Annex B format.
+    // Find each NAL unit, strip the 4 byte length prefix, replace it
+    // with the HEADER, and append the data to the output buffer.
     while buffer_offset < (hevc_data.len() - HEADER.len()) {
         let mut nal_len = u32::from_ne_bytes([
             hevc_data[buffer_offset],
@@ -218,27 +257,23 @@ extern "C" fn encode_callback(
         dbg!(nal_len);
 
         output.extend_from_slice(HEADER);
-        let hevc_offset = buffer_offset + HEADER.len();
+        let hevc_offset = buffer_offset + LENGTH_PREFIX_SIZE; // Replace length prefix with HEADER.
         output.extend_from_slice(&hevc_data[hevc_offset..(hevc_offset + nal_len as usize)]);
 
-        buffer_offset += HEADER.len();
+        buffer_offset += LENGTH_PREFIX_SIZE;
         buffer_offset += nal_len as usize;
     }
 
-    std::mem::forget(vps);
-    std::mem::forget(sps);
-    std::mem::forget(pps);
-
     unsafe {
         if let Some(dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
-            dst_buffer.written_size = hevc_data.len();
+            dst_buffer.written_size = output.len();
 
             let dst_slice = std::slice::from_raw_parts_mut(dst_buffer.data, dst_buffer.len);
-            dst_slice[..hevc_data.len()].copy_from_slice(&hevc_data);
+            dst_slice[..output.len()].copy_from_slice(&output);
         }
     }
 
-    dbg!(hevc_data.len());
+    dbg!(output.len());
 }
 
 struct DstBuffer {

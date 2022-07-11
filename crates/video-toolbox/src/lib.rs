@@ -84,7 +84,9 @@ impl<'a> Iterator for NalIterator<'a> {
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum NalType {
-    CodedSliceIdrNLp,
+    CodedSliceTrailR,   // P-frame
+    CodedSliceIdrNLp,   // I-frame
+    CodedSliceIdrWRadl, // I-frame
     Vps,
     Sps,
     Pps,
@@ -94,7 +96,9 @@ pub(crate) enum NalType {
 impl From<u8> for NalType {
     fn from(nal_byte: u8) -> Self {
         match nal_byte {
+            1 => NalType::CodedSliceTrailR,
             20 => NalType::CodedSliceIdrNLp,
+            19 => NalType::CodedSliceIdrWRadl,
             32 => NalType::Vps,
             33 => NalType::Sps,
             34 => NalType::Pps,
