@@ -75,6 +75,10 @@ pub const kCMVideoCodecType_HEVC: CMVideoCodecType = fourcc(b"hvc1");
 
 // CoreVideo Types
 pub type CVReturn = i32;
+pub type CVOptionFlags = u64;
+
+pub const kCVPixelBufferLock_ReadOnly: CVOptionFlags = 0x00000001;
+pub const kCVPixelFormatType_32BGRA: u32 = fourcc(b"BGRA");
 
 #[repr(C)]
 pub struct CVBuffer {
@@ -117,6 +121,15 @@ pub type CMSampleBufferMakeDataReadyCallback = extern "C" fn(
     sample_buffer: CMSampleBufferRef,
     make_data_ready_ref_con: *mut c_void,
 ) -> OSStatus;
+
+// Core Graphics
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct CGSize {
+    width: f64,
+    height: f64,
+}
 
 // Encoding
 #[link(name = "VideoToolbox", kind = "framework")]
@@ -170,6 +183,10 @@ extern "C" {
         decode_flags: VTDecodeFrameFlags,
         source_frame_ref_con: *const c_void,
         info_flags_out: *mut VTDecodeInfoFlags, // TODO - is it mutable?
+    ) -> OSStatus;
+
+    pub fn VTDecompressionSessionWaitForAsynchronousFrames(
+        session: VTDecompressionSessionRef,
     ) -> OSStatus;
 }
 
@@ -249,6 +266,9 @@ extern "C" {
 // CoreVideo
 #[link(name = "CoreVideo", kind = "framework")]
 extern "C" {
+    pub static kCVPixelBufferPixelFormatTypeKey: CFStringRef;
+    pub static kCVPixelBufferIOSurfacePropertiesKey: CFStringRef;
+
     pub fn CVPixelBufferCreateWithBytes(
         allocator: CFAllocatorRef,
         width: usize,
@@ -261,4 +281,30 @@ extern "C" {
         pixel_buffer_attributes: CFDictionaryRef,
         pixel_buffer_out: *mut CVPixelBufferRef,
     ) -> CVReturn;
+    pub fn CVImageBufferGetEncodedSize(buffer: CVImageBufferRef) -> CGSize;
+    pub fn CVImageBufferGetDisplaySize(buffer: CVImageBufferRef) -> CGSize;
+    pub fn CVPixelBufferGetDataSize(buffer: CVImageBufferRef) -> usize;
+    pub fn CVPixelBufferGetWidth(buffer: CVImageBufferRef) -> usize;
+    pub fn CVPixelBufferGetHeight(buffer: CVImageBufferRef) -> usize;
+    pub fn CVPixelBufferGetPixelFormatType(buffer: CVImageBufferRef) -> OSType;
+    pub fn CVPixelBufferLockBaseAddress(buffer: CVImageBufferRef, flags: CVOptionFlags)
+        -> CVReturn;
+    pub fn CVPixelBufferUnlockBaseAddress(
+        buffer: CVImageBufferRef,
+        flags: CVOptionFlags,
+    ) -> CVReturn;
+    pub fn CVPixelBufferGetBaseAddress(buffer: CVImageBufferRef) -> *const c_void;
+
+    // Planar Functions
+    pub fn CVPixelBufferIsPlanar(buffer: CVImageBufferRef) -> bool;
+    pub fn CVPixelBufferGetPlaneCount(buffer: CVImageBufferRef) -> usize;
+    pub fn CVPixelBufferGetBaseAddressOfPlane(
+        buffer: CVImageBufferRef,
+        plane_index: usize,
+    ) -> *const c_void;
+    pub fn CVPixelBufferGetBytesPerRowOfPlane(
+        buffer: CVPixelBufferRef,
+        plane_index: usize,
+    ) -> usize;
+    pub fn CVPixelBufferGetHeightOfPlane(buffer: CVPixelBufferRef, plane_index: usize) -> usize;
 }

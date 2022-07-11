@@ -6,20 +6,27 @@ use core_foundation::{
     boolean::CFBoolean,
     dictionary::{
         kCFTypeDictionaryKeyCallBacks, kCFTypeDictionaryValueCallBacks, CFDictionaryCreate,
-        CFDictionarySetValue,
+        CFDictionaryCreateMutable, CFDictionarySetValue,
     },
-    number::kCFBooleanTrue,
+    number::{kCFBooleanTrue, kCFNumberSInt32Type, CFNumberCreate},
     string::CFStringRef,
 };
 use thiserror::Error;
 use video_toolbox_sys::{
-    kCMSampleAttachmentKey_DisplayImmediately,
+    kCMSampleAttachmentKey_DisplayImmediately, kCVPixelBufferIOSurfacePropertiesKey,
+    kCVPixelBufferLock_ReadOnly, kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_32BGRA,
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
     CMBlockBufferCreateWithMemoryBlock, CMBlockBufferRef, CMSampleBufferCreate,
     CMSampleBufferGetSampleAttachmentsArray, CMSampleBufferRef, CMTime,
     CMVideoFormatDescriptionCreateFromHEVCParameterSets, CMVideoFormatDescriptionRef,
-    CVImageBufferRef, VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord,
-    VTDecompressionSessionCreate, VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
+    CVImageBufferGetDisplaySize, CVImageBufferGetEncodedSize, CVImageBufferRef,
+    CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
+    CVPixelBufferGetDataSize, CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane,
+    CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount, CVPixelBufferGetWidth,
+    CVPixelBufferIsPlanar, CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
+    VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSessionCreate,
+    VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
+    VTDecompressionSessionWaitForAsynchronousFrames,
 };
 
 #[derive(Debug, Error)]
@@ -140,12 +147,52 @@ impl DecoderInternal {
             decompression_output_ref_con: std::ptr::null_mut(),
         };
 
+        // Specify attributes for the destination image buffer.
+        let dst_image_dictionary = unsafe {
+            let format_type = kCVPixelFormatType_32BGRA;
+            let format_type_ptr: *const u32 = &format_type;
+            let pixel_format = CFNumberCreate(
+                std::ptr::null(),
+                kCFNumberSInt32Type,
+                format_type_ptr as *const c_void,
+            );
+
+            let empty_dictionary = CFDictionaryCreate(
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                0,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+
+            let dst_image_dict = CFDictionaryCreateMutable(
+                std::ptr::null(),
+                2,
+                &kCFTypeDictionaryKeyCallBacks,
+                &kCFTypeDictionaryValueCallBacks,
+            );
+
+            CFDictionarySetValue(
+                dst_image_dict,
+                kCVPixelBufferPixelFormatTypeKey as *const c_void,
+                pixel_format as *const c_void,
+            );
+            CFDictionarySetValue(
+                dst_image_dict,
+                kCVPixelBufferIOSurfacePropertiesKey as *const c_void,
+                empty_dictionary as *const c_void,
+            );
+
+            dst_image_dict
+        };
+
         let create_status = unsafe {
             VTDecompressionSessionCreate(
                 std::ptr::null(),                                            // Allocator
                 format_description,                                          // Format Description
                 decoder_specification, // Decoder specification,
-                std::ptr::null(),      // Dest image buffer attributes
+                dst_image_dictionary,  // Dest image buffer attributes
                 &callback_record, // Output callback, pass NULL if you're using VTDecompressionSessionDecodeFrameWithOutputHandler
                 decompression_ref.as_mut_ptr() as VTDecompressionSessionRef, // Decompression session out
             )
@@ -285,7 +332,9 @@ impl DecoderInternal {
             );
         }
 
-        // Wait for frames to be done with VTDecompressionSessionWaitForAsynchronousFrames()
+        let _ = unsafe {
+            VTDecompressionSessionWaitForAsynchronousFrames(self.decode_session.unwrap())
+        };
 
         Ok(())
     }
@@ -296,7 +345,7 @@ extern "C" fn decode_callback(
     source_frame_ref_con: *mut c_void,
     status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
-    _image_buffer: CVImageBufferRef,
+    image_buffer: CVImageBufferRef,
     _presentation_timestamp: CMTime,
     _presentation_duration: CMTime,
 ) {
@@ -304,12 +353,38 @@ extern "C" fn decode_callback(
     println!("Status: {}", status);
 
     unsafe {
-        if let Some(_dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
-            // Copy frame to dst_buffer
-            // dst_buffer.written_size = hevc_data.len();
+        if let Some(dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
+            println!(
+                "We have a frame to write to, it has dimensions {}x{}",
+                CVPixelBufferGetWidth(image_buffer),
+                CVPixelBufferGetHeight(image_buffer)
+            );
+            println!("Buffer encoded size is {:?}", CVImageBufferGetEncodedSize(image_buffer));
+            println!("Buffer display size is {:?}", CVImageBufferGetDisplaySize(image_buffer));
+            println!("Data size is {:?}", CVPixelBufferGetDataSize(image_buffer));
+            println!("The buffer is planar: {}", CVPixelBufferIsPlanar(image_buffer));
+            println!("The buffer has {} planes", CVPixelBufferGetPlaneCount(image_buffer));
+            println!(
+                "The pixel format type is 0x{:x}",
+                CVPixelBufferGetPixelFormatType(image_buffer)
+            );
 
-            // let dst_slice = std::slice::from_raw_parts_mut(dst_buffer.data, dst_buffer.len);
-            // dst_slice[..hevc_data.len()].copy_from_slice(&hevc_data);
+            // Lock the buffer and copy it to our output buffer.
+            let _ = CVPixelBufferLockBaseAddress(image_buffer, kCVPixelBufferLock_ReadOnly);
+
+            let plane = 0;
+            let plane_base_address = CVPixelBufferGetBaseAddressOfPlane(image_buffer, plane);
+            let bytes_per_row = CVPixelBufferGetBytesPerRowOfPlane(image_buffer, plane);
+            let num_rows = CVPixelBufferGetHeightOfPlane(image_buffer, plane);
+            let src_len = bytes_per_row * num_rows;
+
+            let src_slice: &[u8] =
+                std::slice::from_raw_parts(plane_base_address as *const u8, src_len);
+            let dst_slice = std::slice::from_raw_parts_mut(dst_buffer.data, dst_buffer.len);
+
+            dst_slice[..src_len].copy_from_slice(src_slice);
+
+            let _ = CVPixelBufferUnlockBaseAddress(image_buffer, kCVPixelBufferLock_ReadOnly);
         }
     }
 }
