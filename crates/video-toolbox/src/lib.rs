@@ -86,6 +86,7 @@ impl<'a> Iterator for NalIterator<'a> {
 pub(crate) enum NalType {
     CodedSliceTrailR,   // P-frame
     CodedSliceIdrNLp,   // I-frame
+    CodedSliceCra,      // I-frame?
     CodedSliceIdrWRadl, // I-frame
     Vps,
     Sps,
@@ -98,6 +99,7 @@ impl From<u8> for NalType {
         match nal_byte {
             1 => NalType::CodedSliceTrailR,
             20 => NalType::CodedSliceIdrNLp,
+            21 => NalType::CodedSliceCra,
             19 => NalType::CodedSliceIdrWRadl,
             32 => NalType::Vps,
             33 => NalType::Sps,
