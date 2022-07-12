@@ -223,7 +223,11 @@ impl DecoderInternal {
             for nal in nal_iter {
                 println!("NAL Type: {:?}", nal.nal_type);
 
-                if nal.nal_type == NalType::CodedSliceTrailR {
+                if nal.nal_type == NalType::CodedSliceTrailR
+                    || nal.nal_type == NalType::CodedSliceIdrNLp
+                    || nal.nal_type == NalType::CodedSliceCra
+                    || nal.nal_type == NalType::CodedSliceIdrWRadl
+                {
                     p_slice = Some(nal.data);
                 }
             }
