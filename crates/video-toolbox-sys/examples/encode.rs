@@ -10,32 +10,22 @@ use std::{convert::TryInto, os::raw::c_void};
 use video_toolbox_sys::{
     kCMVideoCodecType_HEVC, kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
     CMBlockBufferCopyDataBytes, CMFormatDescriptionRef, CMSampleBufferGetDataBuffer,
-    CMSampleBufferGetFormatDescription, CMSampleBufferGetTotalSampleSize, CMSampleBufferIsValid,
-    CMSampleBufferRef, CMTime, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex,
-    CVPixelBufferCreateWithBytes, CVPixelBufferRef, VTCompressionSessionCompleteFrames,
-    VTCompressionSessionCreate, VTCompressionSessionEncodeFrame, VTCompressionSessionRef,
-    VTEncodeInfoFlags,
+    CMSampleBufferGetFormatDescription, CMSampleBufferGetTotalSampleSize, CMSampleBufferRef,
+    CMTime, CMVideoFormatDescriptionGetHEVCParameterSetAtIndex, CVPixelBufferCreateWithBytes,
+    CVPixelBufferRef, VTCompressionSessionCompleteFrames, VTCompressionSessionCreate,
+    VTCompressionSessionEncodeFrame, VTCompressionSessionRef, VTEncodeInfoFlags,
 };
 
 extern "C" fn encode_callback(
     _output_callback_ref_con: *mut std::os::raw::c_void,
     source_frame_ref_con: *mut std::os::raw::c_void,
-    status: OSStatus,
+    _status: OSStatus,
     _info_flags: VTEncodeInfoFlags,
     sample_buffer: CMSampleBufferRef,
 ) {
-    println!("encode_callback");
-
-    println!("Status: {}", status);
-
-    println!("Valid buffer: {}", unsafe { CMSampleBufferIsValid(sample_buffer) });
     // Returns the total size in bytes of sample data in a CMSampleBuffer.
     let data_length = unsafe { CMSampleBufferGetTotalSampleSize(sample_buffer) };
-    println!("Total sample size: {}", data_length);
-
     let data_buffer = unsafe { CMSampleBufferGetDataBuffer(sample_buffer) };
-    println!("Data buffer: {:?}", data_buffer);
-
     let format = unsafe { CMSampleBufferGetFormatDescription(sample_buffer) };
 
     let vps = get_hevc_param(format, HevcParam::Vps).unwrap();
@@ -76,7 +66,6 @@ extern "C" fn encode_callback(
             hevc_data[(buffer_offset + 3)],
         ]);
         nal_len = u32::from_be(nal_len);
-        dbg!(nal_len);
 
         output.extend_from_slice(HEADER);
         let hevc_offset = buffer_offset + HEADER.len();
@@ -97,8 +86,6 @@ extern "C" fn encode_callback(
             *custom_val = 37;
         }
     }
-
-    dbg!(hevc_data.len());
 }
 
 #[derive(Debug)]
@@ -135,15 +122,9 @@ fn get_hevc_param(format: CMFormatDescriptionRef, param: HevcParam) -> Option<Ve
         )
     };
 
-    println!(
-        "{:?} - size: {}, count: {}, NAL header len: {:?}",
-        param, param_set_size, param_set_count, nal_unit_header_length
-    );
-
     if status == 0 {
         unsafe {
             let vec = Vec::from_raw_parts(param_set_ptr as *mut _, param_set_size, param_set_size);
-            println!("{:?}", vec);
             Some(vec)
         }
     } else {
@@ -189,7 +170,6 @@ fn main() {
     };
 
     if create_status != 0 {
-        println!("Failed to create VT Compression Session: {}", create_status);
         return;
     }
 
@@ -198,8 +178,6 @@ fn main() {
     // Create the frame to encode
     // let mut frame_data = vec![0u8; (frame_width * frame_height * 4) as usize];
     let frame_data = make_image_frame(frame_width, frame_height);
-
-    println!("Uncompressed size: {}", frame_data.len());
 
     let mut pixel_buffer_ref = std::mem::MaybeUninit::<CVPixelBufferRef>::uninit();
     let k_cvpixel_format_type_32_argb = 0x00000020; // TODO(bschwind) - get this from CoreVideo
@@ -219,23 +197,18 @@ fn main() {
     };
 
     if pixel_buffer_create_status != 0 {
-        println!("Failed to create Pixel Buffer: {}", pixel_buffer_create_status);
         return;
     }
 
     let pixel_buffer = unsafe { pixel_buffer_ref.assume_init() };
-
-    println!("Got a pixel buffer, good to go!");
 
     let frame_time = CMTime { value: 0i64, timescale: 1i32, flags: 0u32, epoch: 0i64 };
 
     let invalid_duration = CMTime { value: 0i64, timescale: 0i32, flags: 0u32, epoch: 0i64 };
 
     let mut custom_val = 0u32;
-
-    let encode_start = std::time::Instant::now();
     // Encode the frame
-    let encode_status = unsafe {
+    let _encode_status = unsafe {
         VTCompressionSessionEncodeFrame(
             compression_session,
             pixel_buffer,
@@ -247,15 +220,10 @@ fn main() {
         );
     };
 
-    println!("Encode status: {:?}", encode_status);
-
     // Wait for the encode to finish.
     let _ = unsafe {
         VTCompressionSessionCompleteFrames(compression_session, invalid_duration);
     };
-
-    println!("Took: {:?}", encode_start.elapsed());
-    println!("Our custom value is {}", custom_val);
 }
 
 fn make_image_frame(width: usize, height: usize) -> Vec<u8> {

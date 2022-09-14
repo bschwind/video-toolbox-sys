@@ -84,7 +84,6 @@ impl Encoder {
         };
 
         if create_status != 0 {
-            println!("Failed to create VT Compression Session: {}", create_status);
             return Err(EncodeError::InitializationError(create_status));
         }
 
@@ -121,13 +120,10 @@ impl Encoder {
         };
 
         if pixel_buffer_create_status != 0 {
-            println!("Failed to create Pixel Buffer: {}", pixel_buffer_create_status);
             return Err(EncodeError::PixelBufferCreationError(pixel_buffer_create_status));
         }
 
         let pixel_buffer = unsafe { pixel_buffer_ref.assume_init() };
-
-        println!("Got a pixel buffer, good to go!");
 
         let frame_time = CMTime { value: 0i64, timescale: 1i32, flags: 0u32, epoch: 0i64 };
 
@@ -137,7 +133,7 @@ impl Encoder {
         let mut dst_buffer = DstBuffer { data: dst.as_mut_ptr(), len: dst.len(), written_size: 0 };
 
         // Encode the frame
-        let encode_status = unsafe {
+        let _encode_status = unsafe {
             VTCompressionSessionEncodeFrame(
                 self.encode_session,
                 pixel_buffer,
@@ -148,8 +144,6 @@ impl Encoder {
                 std::ptr::null_mut(),                             // Info flags out
             )
         };
-
-        println!("Encode status: {:?}", encode_status);
 
         // Wait for the encode to finish.
         let _ =
@@ -164,12 +158,10 @@ impl Encoder {
 extern "C" fn encode_callback(
     _output_callback_ref_con: *mut std::os::raw::c_void,
     source_frame_ref_con: *mut std::os::raw::c_void,
-    status: OSStatus,
+    _status: OSStatus,
     _info_flags: VTEncodeInfoFlags,
     sample_buffer: CMSampleBufferRef,
 ) {
-    println!("encode_callback");
-
     let attachments = unsafe { CMSampleBufferGetSampleAttachmentsArray(sample_buffer, false) };
     let is_iframe = unsafe {
         if CFArrayGetCount(attachments) > 0 {
@@ -189,17 +181,11 @@ extern "C" fn encode_callback(
         }
     };
 
-    println!("Status: {}", status);
-    println!("Is I-frame: {}", is_iframe);
+    let _buffer_is_valid = unsafe { CMSampleBufferIsValid(sample_buffer) };
 
-    println!("Valid buffer: {}", unsafe { CMSampleBufferIsValid(sample_buffer) });
     // Returns the total size in bytes of sample data in a CMSampleBuffer.
     let data_length = unsafe { CMSampleBufferGetTotalSampleSize(sample_buffer) };
-    println!("Total sample size: {}", data_length);
-
     let data_buffer = unsafe { CMSampleBufferGetDataBuffer(sample_buffer) };
-    println!("Data buffer: {:?}", data_buffer);
-
     let format = unsafe { CMSampleBufferGetFormatDescription(sample_buffer) };
 
     let mut hevc_data = vec![0u8; data_length];
@@ -254,7 +240,6 @@ extern "C" fn encode_callback(
             hevc_data[(buffer_offset + 3)],
         ]);
         nal_len = u32::from_be(nal_len);
-        dbg!(nal_len);
 
         output.extend_from_slice(HEADER);
         let hevc_offset = buffer_offset + LENGTH_PREFIX_SIZE; // Replace length prefix with HEADER.
@@ -272,8 +257,6 @@ extern "C" fn encode_callback(
             dst_slice[..output.len()].copy_from_slice(&output);
         }
     }
-
-    dbg!(output.len());
 }
 
 struct DstBuffer {
@@ -316,15 +299,9 @@ fn get_hevc_param(format: CMFormatDescriptionRef, param: HevcParam) -> Option<Ve
         )
     };
 
-    println!(
-        "{:?} - size: {}, count: {}, NAL header len: {:?}",
-        param, param_set_size, param_set_count, nal_unit_header_length
-    );
-
     if status == 0 {
         unsafe {
             let vec = Vec::from_raw_parts(param_set_ptr as *mut _, param_set_size, param_set_size);
-            println!("{:?}", vec);
             Some(vec)
         }
     } else {

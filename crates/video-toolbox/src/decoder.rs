@@ -202,7 +202,6 @@ impl DecoderInternal {
         };
 
         if create_status != 0 {
-            println!("Failed to create VT Compression Session: {}", create_status);
             return Err(DecodeError::InitializationError(create_status));
         }
 
@@ -221,8 +220,6 @@ impl DecoderInternal {
             let mut p_slice: Option<&[u8]> = None;
 
             for nal in nal_iter {
-                println!("NAL Type: {:?}", nal.nal_type);
-
                 if nal.nal_type == NalType::CodedSliceTrailR
                     || nal.nal_type == NalType::CodedSliceIdrNLp
                     || nal.nal_type == NalType::CodedSliceCra
@@ -243,7 +240,6 @@ impl DecoderInternal {
             let mut idr_slice: Option<&[u8]> = None;
 
             for nal in nal_iter {
-                println!("NAL Type: {:?}", nal.nal_type);
                 if nal.nal_type == NalType::Vps {
                     vps_slice = Some(nal.data);
                 }
@@ -294,7 +290,6 @@ impl DecoderInternal {
             );
 
             if status != 0 {
-                println!("Error creating CMBlockBuffer");
                 return Err(DecodeError::BlockBufferCreationError(status));
             }
 
@@ -321,7 +316,6 @@ impl DecoderInternal {
             );
 
             if status != 0 {
-                println!("Error creating CMSampleBuffer");
                 return Err(DecodeError::SampleBufferCreationError(status));
             }
 
@@ -362,31 +356,22 @@ impl DecoderInternal {
 extern "C" fn decode_callback(
     _output_callback_ref_con: *mut c_void,
     source_frame_ref_con: *mut c_void,
-    status: OSStatus,
+    _status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
     image_buffer: CVImageBufferRef,
     _presentation_timestamp: CMTime,
     _presentation_duration: CMTime,
 ) {
-    println!("decode_callback");
-    println!("Status: {}", status);
-
     unsafe {
         if let Some(dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
-            println!(
-                "We have a frame to write to, it has dimensions {}x{}",
-                CVPixelBufferGetWidth(image_buffer),
-                CVPixelBufferGetHeight(image_buffer)
-            );
-            println!("Buffer encoded size is {:?}", CVImageBufferGetEncodedSize(image_buffer));
-            println!("Buffer display size is {:?}", CVImageBufferGetDisplaySize(image_buffer));
-            println!("Data size is {:?}", CVPixelBufferGetDataSize(image_buffer));
-            println!("The buffer is planar: {}", CVPixelBufferIsPlanar(image_buffer));
-            println!("The buffer has {} planes", CVPixelBufferGetPlaneCount(image_buffer));
-            println!(
-                "The pixel format type is 0x{:x}",
-                CVPixelBufferGetPixelFormatType(image_buffer)
-            );
+            let _width = CVPixelBufferGetWidth(image_buffer);
+            let _height = CVPixelBufferGetHeight(image_buffer);
+            let _encoded_buf_size = CVImageBufferGetEncodedSize(image_buffer);
+            let _display_size = CVImageBufferGetDisplaySize(image_buffer);
+            let _data_size = CVPixelBufferGetDataSize(image_buffer);
+            let _is_planar = CVPixelBufferIsPlanar(image_buffer);
+            let _num_planes = CVPixelBufferGetPlaneCount(image_buffer);
+            let _pixel_format_type = CVPixelBufferGetPixelFormatType(image_buffer);
 
             // Lock the buffer and copy it to our output buffer.
             let _ = CVPixelBufferLockBaseAddress(image_buffer, kCVPixelBufferLock_ReadOnly);
