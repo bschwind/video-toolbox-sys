@@ -54,7 +54,7 @@ pub struct CMFormatDescription {
 }
 
 pub type CMFormatDescriptionRef = *mut CMFormatDescription;
-pub type CMVideoFormatDescriptionRef = CMFormatDescriptionRef;
+pub type CMVideoFormatDescriptionRef = *mut CMFormatDescription;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -188,6 +188,11 @@ extern "C" {
     pub fn VTDecompressionSessionWaitForAsynchronousFrames(
         session: VTDecompressionSessionRef,
     ) -> OSStatus;
+
+    pub fn VTDecompressionSessionCanAcceptFormatDescription(
+        session: VTDecompressionSessionRef,
+        newFormatDesc: CMFormatDescriptionRef,
+    ) -> bool;
 }
 
 // CoreMedia
