@@ -24,7 +24,8 @@ use video_toolbox_sys::{
     CVPixelBufferGetDataSize, CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane,
     CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount, CVPixelBufferGetWidth,
     CVPixelBufferIsPlanar, CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
-    VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSessionCreate,
+    VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord,
+    VTDecompressionSessionCanAcceptFormatDescription, VTDecompressionSessionCreate,
     VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
     VTDecompressionSessionWaitForAsynchronousFrames,
 };
@@ -213,9 +214,43 @@ impl DecoderInternal {
         Ok(())
     }
 
+    #[allow(unused)]
+    fn new_format_is_valid(
+        &mut self,
+        vps_slice: &[u8],
+        sps_slice: &[u8],
+        pps_slice: &[u8],
+    ) -> bool {
+        let format_description = unsafe {
+            let mut format_ref = std::mem::MaybeUninit::<CMVideoFormatDescriptionRef>::uninit();
+
+            let parameter_set_sizes = vec![vps_slice.len(), sps_slice.len(), pps_slice.len()];
+            let parameter_sets = vec![vps_slice.as_ptr(), sps_slice.as_ptr(), pps_slice.as_ptr()];
+
+            CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                std::ptr::null(),     // Allocator
+                parameter_sets.len(), // parameter set count
+                parameter_sets.as_ptr(),
+                parameter_set_sizes.as_ptr(),
+                4,                                                      // NAL unit header length
+                std::ptr::null(),                                       // extensions
+                format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef, // Format ref out
+            );
+
+            format_ref.assume_init()
+        };
+
+        unsafe {
+            let decode_ptr = *self.decode_session.as_mut().unwrap();
+            VTDecompressionSessionCanAcceptFormatDescription(decode_ptr, format_description)
+        }
+    }
+
     fn decode(&mut self, src: &[u8], dst: &mut [u8]) -> Result<(), DecodeError> {
         let nal_iter = NalIterator::new(src);
 
+        // TODO - make decisions based on what NAL units we receive, not what state
+        // our decoder is in.
         let frame_data = if let Some(_decode_session) = self.decode_session {
             let mut p_slice: Option<&[u8]> = None;
 
@@ -228,6 +263,7 @@ impl DecoderInternal {
                     p_slice = Some(nal.data);
                 }
             }
+
             // If we have a decode session, look for P frames.
             // TODO - Loop through NAL units and assign a P frame to frame_data.
             p_slice.ok_or(DecodeError::MissingPFrame)?
