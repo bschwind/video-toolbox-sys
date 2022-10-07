@@ -24,14 +24,12 @@ use video_toolbox_sys::{
 extern "C" fn decode_callback(
     _output_callback_ref_con: *mut c_void,
     _source_frame_ref_con: *mut c_void,
-    status: OSStatus,
+    _status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
     _image_buffer: CVImageBufferRef,
     _presentation_timestamp: CMTime,
     _presentation_duration: CMTime,
 ) {
-    println!("decode_callback");
-    println!("Status: {}", status);
 }
 
 struct NalIterator<'a> {
@@ -127,8 +125,6 @@ fn main() {
     let nal_iter = NalIterator::new(hevc_bytes);
 
     for nal in nal_iter {
-        println!("NAL: {:?}, size: {}", nal.nal_type, nal.data.len());
-
         if nal.nal_type == 32 {
             vps_slice = Some(nal.data);
         }
@@ -212,7 +208,6 @@ fn main() {
     };
 
     if create_status != 0 {
-        println!("Failed to create VT Compression Session: {}", create_status);
         return;
     }
 
@@ -241,7 +236,7 @@ fn main() {
         );
 
         if status != 0 {
-            println!("Error creating CMBlockBuffer");
+            return;
         }
 
         block_buffer_out.assume_init()
@@ -267,7 +262,7 @@ fn main() {
         );
 
         if status != 0 {
-            println!("Error creating CMSampleBuffer");
+            return;
         }
 
         sample_buffer_out.assume_init()

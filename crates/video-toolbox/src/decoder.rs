@@ -24,7 +24,8 @@ use video_toolbox_sys::{
     CVPixelBufferGetDataSize, CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane,
     CVPixelBufferGetPixelFormatType, CVPixelBufferGetPlaneCount, CVPixelBufferGetWidth,
     CVPixelBufferIsPlanar, CVPixelBufferLockBaseAddress, CVPixelBufferUnlockBaseAddress,
-    VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSessionCreate,
+    VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord,
+    VTDecompressionSessionCanAcceptFormatDescription, VTDecompressionSessionCreate,
     VTDecompressionSessionDecodeFrame, VTDecompressionSessionRef,
     VTDecompressionSessionWaitForAsynchronousFrames,
 };
@@ -202,7 +203,6 @@ impl DecoderInternal {
         };
 
         if create_status != 0 {
-            println!("Failed to create VT Compression Session: {}", create_status);
             return Err(DecodeError::InitializationError(create_status));
         }
 
@@ -214,15 +214,47 @@ impl DecoderInternal {
         Ok(())
     }
 
+    #[allow(unused)]
+    fn new_format_is_valid(
+        &mut self,
+        vps_slice: &[u8],
+        sps_slice: &[u8],
+        pps_slice: &[u8],
+    ) -> bool {
+        let format_description = unsafe {
+            let mut format_ref = std::mem::MaybeUninit::<CMVideoFormatDescriptionRef>::uninit();
+
+            let parameter_set_sizes = vec![vps_slice.len(), sps_slice.len(), pps_slice.len()];
+            let parameter_sets = vec![vps_slice.as_ptr(), sps_slice.as_ptr(), pps_slice.as_ptr()];
+
+            CMVideoFormatDescriptionCreateFromHEVCParameterSets(
+                std::ptr::null(),     // Allocator
+                parameter_sets.len(), // parameter set count
+                parameter_sets.as_ptr(),
+                parameter_set_sizes.as_ptr(),
+                4,                                                      // NAL unit header length
+                std::ptr::null(),                                       // extensions
+                format_ref.as_mut_ptr() as CMVideoFormatDescriptionRef, // Format ref out
+            );
+
+            format_ref.assume_init()
+        };
+
+        unsafe {
+            let decode_ptr = *self.decode_session.as_mut().unwrap();
+            VTDecompressionSessionCanAcceptFormatDescription(decode_ptr, format_description)
+        }
+    }
+
     fn decode(&mut self, src: &[u8], dst: &mut [u8]) -> Result<(), DecodeError> {
         let nal_iter = NalIterator::new(src);
 
+        // TODO - make decisions based on what NAL units we receive, not what state
+        // our decoder is in.
         let frame_data = if let Some(_decode_session) = self.decode_session {
             let mut p_slice: Option<&[u8]> = None;
 
             for nal in nal_iter {
-                println!("NAL Type: {:?}", nal.nal_type);
-
                 if nal.nal_type == NalType::CodedSliceTrailR
                     || nal.nal_type == NalType::CodedSliceIdrNLp
                     || nal.nal_type == NalType::CodedSliceCra
@@ -231,6 +263,7 @@ impl DecoderInternal {
                     p_slice = Some(nal.data);
                 }
             }
+
             // If we have a decode session, look for P frames.
             // TODO - Loop through NAL units and assign a P frame to frame_data.
             p_slice.ok_or(DecodeError::MissingPFrame)?
@@ -243,7 +276,6 @@ impl DecoderInternal {
             let mut idr_slice: Option<&[u8]> = None;
 
             for nal in nal_iter {
-                println!("NAL Type: {:?}", nal.nal_type);
                 if nal.nal_type == NalType::Vps {
                     vps_slice = Some(nal.data);
                 }
@@ -294,7 +326,6 @@ impl DecoderInternal {
             );
 
             if status != 0 {
-                println!("Error creating CMBlockBuffer");
                 return Err(DecodeError::BlockBufferCreationError(status));
             }
 
@@ -321,7 +352,6 @@ impl DecoderInternal {
             );
 
             if status != 0 {
-                println!("Error creating CMSampleBuffer");
                 return Err(DecodeError::SampleBufferCreationError(status));
             }
 
@@ -362,31 +392,22 @@ impl DecoderInternal {
 extern "C" fn decode_callback(
     _output_callback_ref_con: *mut c_void,
     source_frame_ref_con: *mut c_void,
-    status: OSStatus,
+    _status: OSStatus,
     _info_flags: VTDecodeInfoFlags,
     image_buffer: CVImageBufferRef,
     _presentation_timestamp: CMTime,
     _presentation_duration: CMTime,
 ) {
-    println!("decode_callback");
-    println!("Status: {}", status);
-
     unsafe {
         if let Some(dst_buffer) = (source_frame_ref_con as *mut DstBuffer).as_mut() {
-            println!(
-                "We have a frame to write to, it has dimensions {}x{}",
-                CVPixelBufferGetWidth(image_buffer),
-                CVPixelBufferGetHeight(image_buffer)
-            );
-            println!("Buffer encoded size is {:?}", CVImageBufferGetEncodedSize(image_buffer));
-            println!("Buffer display size is {:?}", CVImageBufferGetDisplaySize(image_buffer));
-            println!("Data size is {:?}", CVPixelBufferGetDataSize(image_buffer));
-            println!("The buffer is planar: {}", CVPixelBufferIsPlanar(image_buffer));
-            println!("The buffer has {} planes", CVPixelBufferGetPlaneCount(image_buffer));
-            println!(
-                "The pixel format type is 0x{:x}",
-                CVPixelBufferGetPixelFormatType(image_buffer)
-            );
+            let _width = CVPixelBufferGetWidth(image_buffer);
+            let _height = CVPixelBufferGetHeight(image_buffer);
+            let _encoded_buf_size = CVImageBufferGetEncodedSize(image_buffer);
+            let _display_size = CVImageBufferGetDisplaySize(image_buffer);
+            let _data_size = CVPixelBufferGetDataSize(image_buffer);
+            let _is_planar = CVPixelBufferIsPlanar(image_buffer);
+            let _num_planes = CVPixelBufferGetPlaneCount(image_buffer);
+            let _pixel_format_type = CVPixelBufferGetPixelFormatType(image_buffer);
 
             // Lock the buffer and copy it to our output buffer.
             let _ = CVPixelBufferLockBaseAddress(image_buffer, kCVPixelBufferLock_ReadOnly);
