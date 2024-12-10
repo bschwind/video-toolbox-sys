@@ -136,6 +136,8 @@ pub struct CGSize {
 extern "C" {
     // Encoding
     pub static kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: CFStringRef;
+    pub static kVTEncodeFrameOptionKey_ForceKeyFrame: CFStringRef;
+    pub static kVTVideoEncoderSpecification_EnableLowLatencyRateControl: CFStringRef;
 
     pub fn VTCompressionSessionCreate(
         allocator: CFAllocatorRef,

@@ -1,3 +1,4 @@
+use crate::NalType;
 use core::ffi::c_void;
 use core_foundation::{
     array::{CFArrayGetCount, CFArrayGetValueAtIndex},
@@ -12,7 +13,8 @@ use core_foundation::{
 };
 use thiserror::Error;
 use video_toolbox_sys::{
-    kCMSampleAttachmentKey_NotSync, kCMVideoCodecType_HEVC,
+    kCMSampleAttachmentKey_NotSync, kCMVideoCodecType_HEVC, kVTEncodeFrameOptionKey_ForceKeyFrame,
+    kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
     kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
     CMBlockBufferCopyDataBytes, CMFormatDescriptionRef, CMSampleBufferGetDataBuffer,
     CMSampleBufferGetFormatDescription, CMSampleBufferGetSampleAttachmentsArray,
@@ -51,10 +53,14 @@ impl Encoder {
         let mut encode_ref = std::mem::MaybeUninit::<VTCompressionSessionRef>::uninit();
 
         // Require hardware-accelerated encoding.
-        let keys: Vec<CFStringRef> =
-            unsafe { vec![kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] };
+        let keys: Vec<CFStringRef> = unsafe {
+            vec![
+                kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder,
+                kVTVideoEncoderSpecification_EnableLowLatencyRateControl,
+            ]
+        };
 
-        let values: Vec<CFBoolean> = vec![CFBoolean::true_value()];
+        let values: Vec<CFBoolean> = vec![CFBoolean::true_value(), CFBoolean::true_value()];
 
         let encoder_specification = unsafe {
             CFDictionaryCreate(
@@ -82,6 +88,11 @@ impl Encoder {
                 encode_ref.as_mut_ptr() as VTCompressionSessionRef,
             )
         };
+
+        // TODO - try this
+        // // Indicate that the compression session is real-time, which conferencing
+        // // requires.
+        // err = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
         if create_status != 0 {
             println!("Failed to create VT Compression Session: {}", create_status);
@@ -136,13 +147,32 @@ impl Encoder {
         // TODO - allocate in a Box.
         let mut dst_buffer = DstBuffer { data: dst.as_mut_ptr(), len: dst.len(), written_size: 0 };
 
+        // // Force I-frame
+        // // Require hardware-accelerated encoding.
+        // let keys: Vec<CFStringRef> =
+        //     unsafe { vec![kVTEncodeFrameOptionKey_ForceKeyFrame] };
+
+        // let values: Vec<CFBoolean> = vec![CFBoolean::true_value()];
+
+        // let frame_properties = unsafe {
+        //     CFDictionaryCreate(
+        //         std::ptr::null(),
+        //         std::mem::transmute(keys.as_ptr()),
+        //         std::mem::transmute(values.as_ptr()),
+        //         keys.len().to_CFIndex(),
+        //         &kCFTypeDictionaryKeyCallBacks,
+        //         &kCFTypeDictionaryValueCallBacks,
+        //     )
+        // };
+
         // Encode the frame
         let encode_status = unsafe {
             VTCompressionSessionEncodeFrame(
                 self.encode_session,
                 pixel_buffer,
-                frame_time,                                       // Presentation timestamp
-                invalid_duration,                                 // Frame duration
+                frame_time,       // Presentation timestamp
+                invalid_duration, // Frame duration
+                // frame_properties,                                 // Frame Properties
                 std::ptr::null(),                                 // Frame Properties
                 &mut dst_buffer as *mut DstBuffer as *mut c_void, // Source frame ref con
                 std::ptr::null_mut(),                             // Info flags out
@@ -165,17 +195,20 @@ extern "C" fn encode_callback(
     _output_callback_ref_con: *mut std::os::raw::c_void,
     source_frame_ref_con: *mut std::os::raw::c_void,
     status: OSStatus,
-    _info_flags: VTEncodeInfoFlags,
+    info_flags: VTEncodeInfoFlags,
     sample_buffer: CMSampleBufferRef,
 ) {
     println!("encode_callback");
+    dbg!(info_flags);
+    dbg!(status);
 
     let attachments = unsafe { CMSampleBufferGetSampleAttachmentsArray(sample_buffer, false) };
     let is_iframe = unsafe {
-        if CFArrayGetCount(attachments) > 0 {
+        if !attachments.is_null() && CFArrayGetCount(attachments) > 0 {
             let mut is_iframe = std::mem::MaybeUninit::<CFBooleanRef>::uninit();
 
             let attachment_dictionary = CFArrayGetValueAtIndex(attachments, 0) as CFDictionaryRef;
+
             let value_present = CFDictionaryGetValueIfPresent(
                 attachment_dictionary,
                 kCMSampleAttachmentKey_NotSync as *const c_void,
@@ -243,18 +276,32 @@ extern "C" fn encode_callback(
     // NAL Unit.
     const LENGTH_PREFIX_SIZE: usize = 4;
 
+    // TODO - double check this is working correctly
+    // TODO - check if the length prefix is always 4 bytes
+
     // Convert from AVCC format to Annex B format.
     // Find each NAL unit, strip the 4 byte length prefix, replace it
     // with the HEADER, and append the data to the output buffer.
     while buffer_offset < (hevc_data.len() - HEADER.len()) {
         let mut nal_len = u32::from_ne_bytes([
             hevc_data[buffer_offset],
-            hevc_data[(buffer_offset + 1)],
-            hevc_data[(buffer_offset + 2)],
-            hevc_data[(buffer_offset + 3)],
+            hevc_data[buffer_offset + 1],
+            hevc_data[buffer_offset + 2],
+            hevc_data[buffer_offset + 3],
         ]);
         nal_len = u32::from_be(nal_len);
         dbg!(nal_len);
+
+        let nal_type_byte = (hevc_data[buffer_offset + 4] >> 1) & 0b0011_1111;
+        let nal_type = NalType::from(nal_type_byte);
+        dbg!(&nal_type);
+
+        // Skip the SEI NAL unit
+        // if nal_type == NalType::Unknown(39) {
+        //     buffer_offset += LENGTH_PREFIX_SIZE;
+        //     buffer_offset += nal_len as usize;
+        //     continue;
+        // }
 
         output.extend_from_slice(HEADER);
         let hevc_offset = buffer_offset + LENGTH_PREFIX_SIZE; // Replace length prefix with HEADER.
